@@ -16,8 +16,7 @@ import {
   Typography,
 } from "@mui/material";
 import { NavLink, useNavigate } from "react-router-dom";
-import { ButtonConnect } from "../UI/Wallet";
-import Logo from "../../assets/logo.png";
+
 import { FaBars } from "react-icons/fa";
 import {
   FaExchangeAlt,

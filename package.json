@@ -11,11 +11,11 @@
   },
   "dependencies": {
     "@alch/alchemy-web3": "^1.4.7",
-    "@emotion/react": "^11.13.5",
-    "@emotion/styled": "^11.13.5",
+    "@emotion/react": "^11.14.0",
+    "@emotion/styled": "^11.14.0",
     "@ethersproject/address": "^5.7.0",
     "@ethersproject/units": "^5.7.0",
-    "@mui/material": "^6.1.9",
+    "@mui/material": "^6.4.5",
     "@mui/styled-engine-sc": "^6.1.9",
     "@mui/x-charts": "^7.23.2",
     "@rainbow-me/rainbowkit": "^2.2.0",
@@ -27,6 +27,7 @@
     "axios": "^1.7.9",
     "bignumber.js": "^9.1.2",
     "chart.js": "^4.4.7",
+    "diamnet-sdk": "^1.0.2",
     "ethers": "^5.7.2",
     "global": "^4.4.0",
     "lucide-react": "^0.469.0",
@@ -38,7 +39,7 @@
     "react-router-dom": "^6.28.0",
     "recharts": "^2.13.3",
     "styled-components": "^6.1.13",
-    "wagmi": "^2.13.0",
+    "wagmi": "^2.14.12",
     "web3": "^1.8.2"
   },
   "devDependencies": {
