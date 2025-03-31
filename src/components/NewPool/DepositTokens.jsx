@@ -33,7 +33,6 @@ const DepositTokens = ({
 }) => {
   const [ethAmount, setEthAmount] = useState(amounts.token1);
   const [usdtAmount, setUsdtAmount] = useState(amounts.token2);
-  const { isConnected } = useAccount();
 
 
 
@@ -214,15 +213,15 @@ const DepositTokens = ({
         variant="contained"
         onClick={handleProceed}
         sx={{
-          bgcolor: isConnected ? "#D3D3D3" : "black",
+          bgcolor:  "black",
           color: "#fff",
           py: 1.5,
           textTransform: "none",
           borderRadius:8,
-          "&:hover": { bgcolor: isConnected ? "#333" : "#fba3ff" },
+          "&:hover": { bgcolor: "#fba3ff" },
         }}
       >
-        {isConnected ? "Enter an amount" : "Connect Wallet"}
+       Enter an amount
       </Button>
     </Box>
   );

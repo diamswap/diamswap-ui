@@ -21,8 +21,7 @@ import { metadata } from "../../metadata/tokens";
 import TokenSelectorModal from "../../comman/TokenSelector";
 import CustomButton from "../../comman/CustomButton";
 import { useNavigate } from "react-router-dom";
-import AOS from "aos";
-import "aos/dist/aos.css";
+
 
 
 const IconButton = styled("button")({
@@ -144,11 +143,7 @@ export default function Home() {
   };
 
 
-  useEffect(() => {
-    AOS.init({
-      duration: 1200,
-    });
-  }, []);
+
 
   return (
     <Box

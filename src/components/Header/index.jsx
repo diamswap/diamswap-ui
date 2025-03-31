@@ -187,7 +187,6 @@ const Navbar = () => {
     </Box>
   );
 
-
   const renderMenuItems = (menu) => {
     return menuConfig[menu].map((item) => (
       <MenuItem
@@ -204,7 +203,7 @@ const Navbar = () => {
           gap: "8px",
           "&:hover": {
             backgroundColor: "#ccc",
-            color: "#000"
+            color: "#000",
           },
         }}
       >
@@ -242,7 +241,7 @@ const Navbar = () => {
         background: "transparent",
         boxShadow: "none",
         padding: "0.5rem 0.5rem",
-        width: "100%"
+        width: "100%",
       }}
     >
       <Toolbar
@@ -252,10 +251,19 @@ const Navbar = () => {
         }}
       >
         <Box display={"flex"} gap={1}>
-          <Button component={NavLink} to="/" sx={{
-            color: "#fff", textTransform: "none",
-          }}>
-            <img src="https://framerusercontent.com/images/hCJipfYt6QNf2M7IkkKiSiZ5t0.png?scale-down-to=512" alt="Logo" style={{ height: "1rem", width: "2rem" }} />
+          <Button
+            component={NavLink}
+            to="/"
+            sx={{
+              color: "#fff",
+              textTransform: "none",
+            }}
+          >
+            <img
+              src="https://framerusercontent.com/images/hCJipfYt6QNf2M7IkkKiSiZ5t0.png?scale-down-to=512"
+              alt="Logo"
+              style={{ height: "1rem", width: "2rem" }}
+            />
             Diamante
           </Button>
 
@@ -275,7 +283,6 @@ const Navbar = () => {
                   sx={{
                     color: "#fff",
                     textTransform: "none",
-
                   }}
                   component={NavLink}
                   to={menu === "trade" ? "/swap" : `/${menu}`}
@@ -307,7 +314,14 @@ const Navbar = () => {
           alignItems={"center"}
           justifyContent={"center"}
         >
-              <DiamWalletConnect />
+          <DiamWalletConnect />
+          <Button
+              component={NavLink}
+              to="/profile"
+              sx={{ color: "#fff", textTransform: "none" }}
+            >
+            Profile
+            </Button>
           <Box sx={{ display: { xs: "flex", md: "none" } }}>
             <IconButton
               edge="start"

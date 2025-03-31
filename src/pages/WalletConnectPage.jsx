@@ -1,17 +1,12 @@
 // src/components/DiamWalletConnect.jsx
-
 import React, { useState, useEffect } from "react";
 import { Button, Typography, Modal, Box, IconButton } from "@mui/material";
 import { AiOutlineClose } from "react-icons/ai";
-import { Aurora } from "diamnet-sdk";
-import CustomButton from "../../comman/CustomButton";
 
 const DiamWalletConnect = () => {
   const [publicKey, setPublicKey] = useState(null);
   const [error, setError] = useState(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [accountData, setAccountData] = useState(null);
-  const [loadingAccountData, setLoadingAccountData] = useState(false);
 
   useEffect(() => {
     const storedKey = localStorage.getItem("diamPublicKey");
@@ -51,8 +46,10 @@ const DiamWalletConnect = () => {
     setError(null);
     if (!publicKey) {
       await connectToDiamWallet();
-    }
-    if (publicKey || localStorage.getItem("diamPublicKey")) {
+      if (publicKey || localStorage.getItem("diamPublicKey")) {
+        setIsModalOpen(true);
+      }
+    } else {
       setIsModalOpen(true);
     }
   };
@@ -62,10 +59,8 @@ const DiamWalletConnect = () => {
     localStorage.removeItem("diamPublicKey");
     setIsModalOpen(false);
     setError(null);
-    setAccountData(null);
   };
 
-  // Define modal styling
   const modalStyle = {
     position: "absolute",
     top: "50%",
@@ -78,43 +73,7 @@ const DiamWalletConnect = () => {
     borderRadius: "16px",
     boxShadow: 24,
     p: 3,
-    maxHeight: "80vh",
-    overflowY: "auto",
   };
-
-  // Fetch account data from Diamnet using the Aurora server.
-  const fetchAccountData = async () => {
-    if (!publicKey) return;
-    setLoadingAccountData(true);
-    try {
-      const server = new Aurora.Server("https://diamtestnet.diamcircle.io/");
-      const data = await server.accounts().accountId(publicKey).call();
-      setAccountData(data);
-    } catch (err) {
-      console.error("Failed to fetch account data:", err);
-      setError("Failed to fetch account data.");
-    } finally {
-      setLoadingAccountData(false);
-    }
-  };
-
-  // Extract native balance from accountData (if available)
-  const getNativeBalance = () => {
-    if (accountData && accountData.balances) {
-      const nativeBalance = accountData.balances.find(
-        (bal) => bal.asset_type === "native"
-      );
-      return nativeBalance ? nativeBalance.balance : "0";
-    }
-    return "N/A";
-  };
-
-  // Fetch account data when modal opens and publicKey exists.
-  useEffect(() => {
-    if (isModalOpen && publicKey) {
-      fetchAccountData();
-    }
-  }, [isModalOpen, publicKey]);
 
   return (
     <Box>
@@ -141,7 +100,7 @@ const DiamWalletConnect = () => {
       )}
 
       <Modal open={isModalOpen} onClose={() => setIsModalOpen(false)}>
-        <Box sx={modalStyle}>
+        <Box sx={{ ...modalStyle, position: "relative", p: 5 }}>
           <IconButton
             onClick={() => setIsModalOpen(false)}
             sx={{
@@ -158,31 +117,23 @@ const DiamWalletConnect = () => {
               <strong>Wallet Address:</strong> {publicKey}
             </Typography>
           )}
-      
-          <Box sx={{ mb: 2 }}>
-            <Typography variant="h6">Account Balance</Typography>
-            {loadingAccountData ? (
-              <Typography>Loading balance...</Typography>
-            ) : (
-              <Typography variant="body2">
-                Native (DIAM): {getNativeBalance()}
-              </Typography>
+          <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
+            {publicKey && (
+              <Button
+                onClick={handleDisconnect}
+                variant="outlined"
+                sx={{
+                  textTransform: "none",
+                  borderColor: "#fff",
+                  color: "black",
+                  borderRadius: "14px",
+                  backgroundColor: "white",
+                  mt: 4,
+                }}
+              >
+                Disconnect
+              </Button>
             )}
-          </Box>
-          <Box sx={{ mb: 2 }}>
-            <CustomButton
-              onClick={handleDisconnect}
-              variant="outlined"
-              sx={{
-                textTransform: "none",
-                borderColor: "#fff",
-                color: "#fff",
-                borderRadius: "14px",
-                backgroundColor: "transparent",
-              }}
-            >
-              Disconnect
-            </CustomButton>
           </Box>
         </Box>
       </Modal>

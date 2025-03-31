@@ -1,12 +1,12 @@
-import { useState, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import {
   Box,
+  Typography,
   Button,
-  Card,
+  Avatar,
   Stack,
   TextField,
-  Typography,
-  Avatar,
+  InputAdornment,
   useMediaQuery,
 } from "@mui/material";
 import { styled } from "@mui/material/styles";
@@ -17,7 +17,6 @@ import { IoIosArrowDown } from "react-icons/io";
 import { useTheme } from "@emotion/react";
 import { metadata } from "../../metadata/tokens";
 import TokenSelectorModal from "../../comman/TokenSelector";
-import { useAccount } from "wagmi";
 import CustomButton from "../../comman/CustomButton";
 
 // Styled IconButton component to replace MUI's IconButton
@@ -37,7 +36,7 @@ const IconButton = styled("button")({
 });
 
 // Styled components
-const DarkCard = styled(Card)({
+const DarkCard = styled("div")({
   background: "#000",
   borderRadius: "16px",
   color: "white",
@@ -46,7 +45,7 @@ const DarkCard = styled(Card)({
   maxWidth: "480px",
 });
 
-const ActionCard = styled(Card)({
+const ActionCard = styled("div")({
   background: "rgba(255, 255, 255, 0.05)",
   borderRadius: "12px",
   color: "white",
@@ -92,12 +91,11 @@ const TokenSearchInput = styled(TextField)({
 });
 
 export default function SwapInterface() {
-  const { address, isConnected } = useAccount();
   const [isTokenModalOpen, setTokenModalOpen] = useState(false);
-  const [selectedPayToken, setSelectedPayToken] = useState(metadata.tokens[0]); // Default to the first token
+  const [selectedPayToken, setSelectedPayToken] = useState(metadata.tokens[0]); 
   const [selectedReceiveToken, setSelectedReceiveToken] = useState(
     metadata.tokens[1]
-  ); // Default to the second token
+  ); // Default token for receiving
   const [payAmount, setPayAmount] = useState("0");
   const [receiveAmount, setReceiveAmount] = useState("0");
   const [activeInput, setActiveInput] = useState(null);
@@ -143,6 +141,7 @@ export default function SwapInterface() {
   };
 
   const getExchangeRate = () => {
+    if (Number(payAmount) === 0) return "";
     return `1 ${selectedPayToken.symbol} = ${(
       Number(receiveAmount) / Number(payAmount)
     ).toFixed(4)} ${selectedReceiveToken.symbol}`;
@@ -165,10 +164,9 @@ export default function SwapInterface() {
         }}
       >
         <Stack spacing={3}>
-         
           <Box sx={{ display: "flex", justifyContent: "flex-end" }}>
             <Typography variant="caption" sx={{ color: "gray" }}>
-              Available Balance: {selectedPayToken.balance}{" "}
+              Available Balance: {selectedPayToken.balance || 0}{" "}
               <span style={{ color: "#fff" }}>MAX</span>
             </Typography>
           </Box>
@@ -182,9 +180,7 @@ export default function SwapInterface() {
               <SwapInput
                 variant="standard"
                 value={payAmount}
-                onChange={(e) => {
-                  setPayAmount(e.target.value);
-                }}
+                onChange={(e) => setPayAmount(e.target.value)}
                 fullWidth
               />
               <TokenButton
@@ -204,13 +200,13 @@ export default function SwapInterface() {
               </TokenButton>
             </Box>
 
-            {/* Swap Icon Button centered between Pay and Receive */}
+            {/* Swap Icon Button */}
             <Box
               sx={{
                 position: "absolute",
-                top: "60%", // Align it vertically centered between Pay and Receive
-                left: "40%", // Align it horizontally
-                transform: "translate(-50%, -50%)", // Adjust it properly
+                top: "60%",
+                left: "40%",
+                transform: "translate(-50%, -50%)",
                 zIndex: 1000,
                 cursor: "pointer",
               }}
@@ -228,9 +224,7 @@ export default function SwapInterface() {
               <SwapInput
                 variant="standard"
                 value={receiveAmount}
-                onChange={(e) => {
-                  setReceiveAmount(e.target.value);
-                }}
+                onChange={(e) => setReceiveAmount(e.target.value)}
                 fullWidth
               />
               <TokenButton
@@ -258,18 +252,18 @@ export default function SwapInterface() {
             {getExchangeRate()}
           </Typography>
 
-          <CustomButton>{isConnected ?  "Swap" : "Connect Wallet"}</CustomButton>
+          <CustomButton>Swap</CustomButton>
         </Stack>
 
         <TokenSelectorModal
           open={isTokenModalOpen}
           onClose={() => setTokenModalOpen(false)}
-          tokens={metadata.tokens}
+          tokens={filteredTokens}
           onSelectToken={handleTokenSelect}
+          searchQuery={searchQuery}
+          setSearchQuery={setSearchQuery}
         />
       </Box>
-
-      
     </Box>
   );
 }

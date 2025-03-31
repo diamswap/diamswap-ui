@@ -23,7 +23,6 @@ import { MdOutlineSwapVert } from "react-icons/md";
 import { FaPlus } from "react-icons/fa6";
 import { useTheme } from "@emotion/react";
 import CustomButton from "../../comman/CustomButton";
-import { useAccount } from "wagmi";
 
 // Custom styled components
 const DarkCard = styled(Card)(({ theme }) => ({
@@ -192,7 +191,6 @@ const tokenData = [
 
 export default function NewPosition({onliquidity}) {
   const theme = useTheme();
-  const { address, isConnected } = useAccount();
 
   const isMobile = useMediaQuery(theme.breakpoints.down("sm"));
   const [feeTier, setFeeTier] = useState("0.01");
@@ -582,7 +580,7 @@ export default function NewPosition({onliquidity}) {
               </Box>
 
               {/* Connect Wallet Button */}
-              <CustomButton>{isConnected ?  "Swap" : "Connect Wallet"}</CustomButton>
+              <CustomButton>Swap</CustomButton>
           
             </Stack>
           </Grid>

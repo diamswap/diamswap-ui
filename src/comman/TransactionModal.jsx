@@ -1,4 +1,4 @@
-// TransactionModal.js
+// src/components/TransactionModal.js
 import React, { useState } from "react";
 import {
   Dialog,
@@ -7,13 +7,12 @@ import {
   Typography,
   CircularProgress,
   Box,
-  Link,
   Snackbar,
   Alert,
 } from "@mui/material";
-import { MdCheckCircle, MdError, MdPending } from "react-icons/md";
-import { IoClose } from "react-icons/io5"; // Close icon
-import { AiOutlineCopy } from "react-icons/ai"; // Copy icon
+import { MdCheckCircle, MdError } from "react-icons/md";
+import { IoClose } from "react-icons/io5";
+import { AiOutlineCopy } from "react-icons/ai";
 
 const TransactionModal = ({
   open,
@@ -64,6 +63,8 @@ const TransactionModal = ({
     }
   };
 
+  console.log("TransactionModal props:", { status, message, transactionHash });
+
   return (
     <>
       <Dialog
@@ -76,13 +77,12 @@ const TransactionModal = ({
             padding: "30px",
             color: "#fff",
             textAlign: "center",
-            minWidth: "400px",
+            minWidth: "500px",
             position: "relative",
             border: "1px solid gray",
           },
         }}
       >
-        {/* Close Icon */}
         <IconButton
           onClick={onClose}
           sx={{
@@ -94,8 +94,6 @@ const TransactionModal = ({
         >
           <IoClose size={24} />
         </IconButton>
-
-        {/* Status Icon and Message */}
         <DialogContent
           sx={{
             display: "flex",
@@ -103,27 +101,14 @@ const TransactionModal = ({
             alignItems: "center",
             justifyContent: "center",
             padding: "20px",
-            width: "450px",
+            width: "500px",
           }}
         >
           <Box>{getStatusIcon()}</Box>
-          <Typography
-            variant="h6"
-            sx={{
-              marginTop: "20px",
-              fontWeight: "bold",
-              fontSize: "20px",
-            }}
-          >
+          <Typography variant="h6" sx={{ marginTop: "20px", fontWeight: "bold", fontSize: "20px" }}>
             {getStatusMessage()}
           </Typography>
-          <Typography
-            sx={{
-              marginTop: "10px",
-              fontSize: "14px",
-              color: "rgba(255, 255, 255, 0.7)",
-            }}
-          >
+          <Typography sx={{ marginTop: "10px", fontSize: "14px", color: "rgba(255, 255, 255, 0.7)" }}>
             {message}
           </Typography>
           {transactionHash && status === "success" && (
@@ -133,41 +118,35 @@ const TransactionModal = ({
                 fontSize: "14px",
                 wordBreak: "break-word",
                 display: "flex",
-                flexDirection:"column",
+                flexDirection: "column",
                 alignItems: "center",
                 gap: "8px",
               }}
             >
-             <Typography> Transaction Hash:</Typography> {" "}
+              <Typography>Transaction Hash:</Typography>
               {transactionHash ? (
-               <a
-               href={`https://evm-explorer.nibiru.fi/tx/${transactionHash}`}
-               target="_blank"
-               rel="noopener noreferrer" // Security best practice
-               style={{
-                 color: "#fff", // Example link color
-                 textDecoration: "none", // Optional: remove underline
-                 fontWeight: "bold", // Make text bold
-               }}
-             >
-           {`https://evm-explorer.nibiru.fi/tx/${transactionHash}`}
-             </a>
-             
+                <a
+                  href={`https://testnetexplorer.diamante.io/about-tx-hash/${transactionHash}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{
+                    color: "#fff",
+                    textDecoration: "none",
+                    fontWeight: "bold",
+                  }}
+                >
+                  {`https://testnetexplorer.diamante.io/about-tx-hash/${transactionHash}`}
+                </a>
               ) : (
                 "No transaction hash available"
               )}
-              <IconButton
-                onClick={handleCopy}
-                sx={{ color: "#64b5f6", padding: 0 }}
-              >
+              <IconButton onClick={handleCopy} sx={{ color: "#64b5f6", padding: 0 }}>
                 <AiOutlineCopy size={18} />
               </IconButton>
             </Box>
           )}
         </DialogContent>
       </Dialog>
-
-      {/* Snackbar for Copy Confirmation */}
       <Snackbar
         open={snackbarOpen}
         autoHideDuration={3000}
