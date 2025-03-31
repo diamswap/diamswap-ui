@@ -17,8 +17,7 @@ import {
   CircularProgress,
 } from "@mui/material";
 
-// ^-- adjust the import path if needed
-
+// Adjust the import paths if needed
 import CustomButton from "../../comman/CustomButton";
 import TransactionModal from "../../comman/TransactionModal";
 import { createPatchedAsset, createPatchedLiquidityPoolAsset } from "../patchAssets";
@@ -37,7 +36,7 @@ const server = new Aurora.Server("https://diamtestnet.diamcircle.io/");
 const issuerKeypair = Keypair.random();
 const distributorKeypair = Keypair.random();
 
-// 1) Create the custom asset, using createPatchedAsset:
+// 1) Create the custom asset using createPatchedAsset:
 const customAsset = createPatchedAsset("TradeToken", issuerKeypair.publicKey());
 
 // 2) Create a LiquidityPoolAsset from native + custom asset
@@ -47,14 +46,22 @@ const lpAsset = createPatchedLiquidityPoolAsset(
   30
 );
 
-// 3) Compute the Liquidity Pool ID
+// 3) Compute the Liquidity Pool ID (as a hex string)
 const computedPoolIdHex = getLiquidityPoolId("constant_product", {
   assetA: lpAsset.assetA,
   assetB: lpAsset.assetB,
   fee: 30,
 }).toString("hex");
 
-// Helper: log message
+// Helper: Create a valid liquidity pool share asset object for trustline purposes
+const createLiquidityPoolShareAssetForTrust = (poolIdHex) => {
+  return {
+    getAssetType: () => "liquidity_pool_shares",
+    liquidityPoolId: poolIdHex,
+  };
+};
+
+// Helper: log message to both console and state
 const logMessage = (prevLogs, msg) => {
   console.log(msg);
   return [...prevLogs, msg];
@@ -79,6 +86,7 @@ const LiquidityPage = () => {
   const [transactionStatus, setTransactionStatus] = useState(""); // "pending", "success", "error"
   const [transactionMessage, setTransactionMessage] = useState("");
   const [transactionHash, setTransactionHash] = useState("");
+  const walletPublicKey = localStorage.getItem("diamPublicKey") || "";
 
   // --------------------------
   // Helper functions
@@ -105,57 +113,7 @@ const LiquidityPage = () => {
     }
   };
 
-  // *** Establish Liquidity Pool Trustline ***
-  const establishPoolTrustline = async () => {
-    const walletPK = localStorage.getItem("diamPublicKey");
-    if (!walletPK) {
-      throw new Error("No DIAM wallet connected. Please connect your wallet.");
-    }
-    try {
-      const account = await server.loadAccount(walletPK);
-      const tx = new TransactionBuilder(account, {
-        fee: BASE_FEE,
-        networkPassphrase: NETWORK_PASSPHRASE,
-      })
-        .addOperation(Operation.changeTrust({ asset: lpAsset }))
-        .setTimeout(30)
-        .build();
-
-      setLogs((prev) =>
-        logMessage(prev, "LP Trustline Transaction XDR: " + tx.toXDR())
-      );
-
-      if (!window.diam || typeof window.diam.sign !== "function") {
-        throw new Error("DIAM Wallet extension not available for signing.");
-      }
-
-      const trustXDR = tx.toXDR();
-      const signedTxXDR = await window.diam.sign(
-        trustXDR,
-        true,
-        NETWORK_PASSPHRASE
-      );
-      setLogs((prev) => logMessage(prev, "LP trustline transaction signed."));
-      const response = await server.submitTransaction(signedTxXDR);
-      setLogs((prev) =>
-        logMessage(
-          prev,
-          `✅ LP trustline established for wallet (${walletPK}) | Tx: ${response.hash}`
-        )
-      );
-      return response.hash;
-    } catch (error) {
-      setLogs((prev) =>
-        logMessage(
-          prev,
-          `❌ LP trustline error: ${error?.response?.data || error}`
-        )
-      );
-      throw error;
-    }
-  };
-
-  // Liquidity Pool Deposit
+  // Liquidity Pool Deposit function
   const liquidityPoolDeposit = async () => {
     try {
       setTransactionMessage("Depositing into liquidity pool...");
@@ -163,7 +121,7 @@ const LiquidityPage = () => {
       if (!walletPK) {
         throw new Error("No DIAM wallet connected. Please connect your wallet.");
       }
-      // Use user-supplied LP ID if provided; otherwise use computed pool ID.
+      // Use the provided LP ID or fallback to the computed one.
       const lpIdHex = lpIdInput.trim() || computedPoolIdHex;
       const liquidityPoolIdBuffer = new Uint8Array(
         Buffer.from(lpIdHex, "hex")
@@ -190,14 +148,15 @@ const LiquidityPage = () => {
         throw new Error("DIAM Wallet extension not available for signing.");
       }
 
-      const signedTxXDR = await window.diam.sign(
+      const signResponse = await window.diam.sign(
         tx.toXDR(),
         true,
         NETWORK_PASSPHRASE
       );
       setLogs((prev) =>
-        logMessage(prev, "Deposit sign response: " + JSON.stringify(signedTxXDR))
+        logMessage(prev, "Deposit sign response: " + JSON.stringify(signResponse))
       );
+      const signedTxXDR = signResponse.xdr || signResponse;
       const response = await server.submitTransaction(signedTxXDR);
       setLogs((prev) =>
         logMessage(prev, `✅ Liquidity deposited (Tx: ${response.hash})`)
@@ -214,7 +173,7 @@ const LiquidityPage = () => {
     }
   };
 
-  // Liquidity Pool Withdraw
+  // Liquidity Pool Withdraw function
   const liquidityPoolWithdraw = async () => {
     try {
       setTransactionMessage("Withdrawing from liquidity pool...");
@@ -226,7 +185,6 @@ const LiquidityPage = () => {
       const liquidityPoolIdBuffer = new Uint8Array(
         Buffer.from(lpIdHex, "hex")
       );
-
       const account = await server.loadAccount(walletPK);
       const tx = new TransactionBuilder(account, {
         fee: BASE_FEE,
@@ -246,14 +204,16 @@ const LiquidityPage = () => {
       if (!window.diam || typeof window.diam.sign !== "function") {
         throw new Error("DIAM Wallet extension not available for signing.");
       }
-      const signedTxXDR = await window.diam.sign(
+
+      const signResponse = await window.diam.sign(
         tx.toXDR(),
         true,
         NETWORK_PASSPHRASE
       );
       setLogs((prev) =>
-        logMessage(prev, "Withdraw sign response: " + JSON.stringify(signedTxXDR))
+        logMessage(prev, "Withdraw sign response: " + JSON.stringify(signResponse))
       );
+      const signedTxXDR = signResponse.xdr || signResponse;
       const response = await server.submitTransaction(signedTxXDR);
       setLogs((prev) =>
         logMessage(prev, `✅ Liquidity withdrawn (Tx: ${response.hash})`)
@@ -263,9 +223,7 @@ const LiquidityPage = () => {
       setLogs((prev) =>
         logMessage(
           prev,
-          `❌ Liquidity pool withdrawal error: ${
-            error?.response?.data || error
-          }`
+          `❌ Liquidity pool withdrawal error: ${error?.response?.data || error}`
         )
       );
       throw error;
@@ -287,11 +245,55 @@ const LiquidityPage = () => {
       setTransactionMessage("Funding distributor account...");
       await fundAccount(distributorKeypair);
 
-      // Establish trustline on your connected DIAM wallet
-      setTransactionMessage("Establishing liquidity pool trustline on your wallet...");
-      await establishPoolTrustline();
+      // Load user account from DIAM
+      let userAccount = await server.loadAccount(walletPublicKey);
 
-      // Deposit
+      // 1. Establish trustline for the custom asset (TradeToken)
+      setTransactionMessage("Establishing trustline for TradeToken on your wallet...");
+      const trustCustomTx = new TransactionBuilder(userAccount, {
+        fee: BASE_FEE,
+        networkPassphrase: NETWORK_PASSPHRASE,
+      })
+        .addOperation(Operation.changeTrust({ asset: customAsset }))
+        .setTimeout(30)
+        .build();
+      const trustCustomSignResponse = await window.diam.sign(
+        trustCustomTx.toXDR(),
+        true,
+        NETWORK_PASSPHRASE
+      );
+      const trustCustomXDR = trustCustomSignResponse.xdr || trustCustomSignResponse;
+      await server.submitTransaction(trustCustomXDR);
+      setLogs((prev) =>
+        logMessage(prev, "✅ Trustline established for TradeToken")
+      );
+
+      // Reload account to update its sequence number
+      userAccount = await server.loadAccount(walletPublicKey);
+
+      // 2. Establish liquidity pool trustline (for liquidity pool shares)
+      // Create a patched asset with the required getAssetType method.
+      const lpAssetForTrust = createLiquidityPoolShareAssetForTrust(computedPoolIdHex);
+      setTransactionMessage("Establishing liquidity pool trustline on your wallet...");
+      const trustLpTx = new TransactionBuilder(userAccount, {
+        fee: BASE_FEE,
+        networkPassphrase: NETWORK_PASSPHRASE,
+      })
+        .addOperation(Operation.changeTrust({ asset: lpAssetForTrust }))
+        .setTimeout(30)
+        .build();
+      const trustLpSignResponse = await window.diam.sign(
+        trustLpTx.toXDR(),
+        true,
+        NETWORK_PASSPHRASE
+      );
+      const trustLpXDR = trustLpSignResponse.xdr || trustLpSignResponse;
+      await server.submitTransaction(trustLpXDR);
+      setLogs((prev) =>
+        logMessage(prev, "✅ Liquidity pool trustline established")
+      );
+
+      // 3. Deposit liquidity into the pool
       const depositHash = await liquidityPoolDeposit();
       setTxStatus(`Deposit successful! Tx Hash: ${depositHash}`);
       setTransactionStatus("success");
@@ -318,7 +320,7 @@ const LiquidityPage = () => {
       setTransactionMessage("Funding distributor account...");
       await fundAccount(distributorKeypair);
 
-      // Withdraw
+      // Withdraw liquidity from the pool
       const withdrawHash = await liquidityPoolWithdraw();
       setTxStatus(`Withdrawal successful! Tx Hash: ${withdrawHash}`);
       setTransactionStatus("success");
