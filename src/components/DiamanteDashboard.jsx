@@ -182,7 +182,7 @@ const DiamanteDashboard = ({
                 {/* Explorer Link with gradient text */}
                 <Typography
                   component="a"
-                  href={`https://explorer.diamante.io/about-account/${accountId}`}
+                  href={`https://testnetexplorer.diamante.io/about-account/${accountId}`}
                   target="_blank"
                   rel="noopener noreferrer"
                   sx={{
@@ -329,7 +329,7 @@ const DiamanteDashboard = ({
                       Tx Hash:{" "}
                       <Typography
                         component="a"
-                        href={`https://explorer.diamante.io/transactions/${tx.hash}`}
+                        href={`https://testnetexplorer.diamante.io/transactions/${tx.hash}`}
                         target="_blank"
                         rel="noopener noreferrer"
                         sx={{
