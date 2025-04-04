@@ -22,8 +22,8 @@ import {
   Button,
   CircularProgress,
 } from "@mui/material";
-import CustomButton from "./comman/CustomButton";
-import TransactionModal from "./comman/TransactionModal";
+import CustomButton from "../../comman/CustomButton";
+import TransactionModal from "../../comman/TransactionModal";
 
 // Polyfill Buffer if needed
 if (!window.Buffer) {
