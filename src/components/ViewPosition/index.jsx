@@ -15,8 +15,9 @@ import {
 const server = new Aurora.Server("https://diamtestnet.diamcircle.io/");
 
 const WalletPoolsPage = ({
-  walletId = "GBEEPBKCO4III6YJE4VY4ZNFYDWYPVV4LDPHS44DJTLYAZPK5ZZTPXQQ",
 }) => {
+  const walletId = localStorage.getItem("diamPublicKey");
+
   const [lpBalances, setLpBalances] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");

@@ -1,580 +1,3 @@
-
-// // src/components/CreatePoolDEX.jsx
-// import React, { useState, useEffect } from "react";
-// import {
-//   Container,
-//   Box,
-//   Typography,
-//   TextField,
-//   InputAdornment,
-//   CircularProgress,
-// } from "@mui/material";
-// import { AiOutlinePlusCircle } from "react-icons/ai";
-// import { PinataSDK } from "pinata-web3";
-// import { Blob } from "blob-polyfill";
-// import TransactionModal from "../../comman/TransactionModal";
-// import CustomButton from "../../comman/CustomButton";
-// import { Buffer } from "buffer";
-
-// if (!window.Buffer) {
-//   window.Buffer = Buffer;
-// }
-
-// const CreatePoolDEX = () => {
-//   const [tokenA, setTokenA] = useState("native");
-//   const [tokenB, setTokenB] = useState("");
-//   const [sdk, setSdk] = useState(null);
-//   const [server, setServer] = useState(null);
-//   const [data, setData] = useState({});
-//   const [logs, setLogs] = useState([]);
-//   const [running, setRunning] = useState(false);
-//   const [modalOpen, setModalOpen] = useState(false);
-//   const [transactionStatus, setTransactionStatus] = useState("");
-//   const [transactionMessage, setTransactionMessage] = useState("");
-
-//   // Helper to add logs to state (displayed in UI)
-//   const addLog = (message) => {
-//     setLogs((prev) => [...prev, message]);
-//   };
-
-//   // Initialize SDK, server, and generate keypairs
-//   useEffect(() => {
-//     (async () => {
-//       try {
-//         const DiamSdkModule = await import("diamnet-sdk");
-//         const diamnetSdk = DiamSdkModule.default || DiamSdkModule;
-//         setSdk(diamnetSdk);
-
-//         // Create server instance
-//         const srv = new diamnetSdk.Aurora.Server(
-//           "https://diamtestnet.diamcircle.io/"
-//         );
-//         setServer(srv);
-
-//         // Create 3 random keypairs
-//         const nftIssuer = diamnetSdk.Keypair.random();
-//         const distributor = diamnetSdk.Keypair.random();
-//         const buyer = diamnetSdk.Keypair.random();
-
-//         // Create a default custom asset
-//         const customAsset = new diamnetSdk.Asset(
-//           "TradeToken",
-//           nftIssuer.publicKey()
-//         );
-
-//         setData({
-//           nftIssuerKeypair: nftIssuer,
-//           distributorKeypair: distributor,
-//           buyerKeypair: buyer,
-//           customAsset,
-//           lpAsset: null,
-//           liquidityPoolId: null,
-//           liquidityPoolIdBuffer: null,
-//           distributorNFT: null,
-//           distributorNFTName: null,
-//         });
-
-//         addLog("Initialized SDK and keypairs.");
-//         addLog("NFT Issuer: " + nftIssuer.publicKey());
-//         addLog("Distributor: " + distributor.publicKey());
-//         addLog("Buyer: " + buyer.publicKey());
-//       } catch (error) {
-//         addLog("Error initializing Diamnet SDK: " + error.toString());
-//       }
-//     })();
-//   }, []);
-
-//   // Once sdk and customAsset are ready, update tokenB to match customAsset
-//   useEffect(() => {
-//     if (sdk && data.customAsset) {
-//       // Use the same format as expected: "CODE:ISSUER"
-//       setTokenB(`${data.customAsset.getCode()}:${data.customAsset.getIssuer()}`);
-//     }
-//   }, [sdk, data.customAsset]);
-
-//   // Helper: parse user input for token
-//   const parseTokenInput = (input) => {
-//     const val = input.trim().toLowerCase();
-//     if (val === "native" || val === "xlm") {
-//       return sdk.Asset.native();
-//     }
-//     const [code, issuer] = input.split(":");
-//     if (!code || !issuer) {
-//       throw new Error('Invalid token format: use "native" or "CODE:ISSUER".');
-//     }
-//     return new sdk.Asset(code, issuer);
-//   };
-
-//   // Combined DEX operation workflow
-//   const handleCreatePoolAndRun = async () => {
-//     if (!server || !sdk || !data.nftIssuerKeypair) {
-//       addLog("SDK or keypairs not ready yet.");
-//       return;
-//     }
-
-//     setRunning(true);
-//     setModalOpen(true);
-//     setTransactionStatus("pending");
-//     setTransactionMessage("");
-
-//     try {
-//       const {
-//         TransactionBuilder,
-//         BASE_FEE,
-//         Networks,
-//         Operation,
-//         LiquidityPoolAsset,
-//         getLiquidityPoolId,
-//         Asset,
-//       } = sdk;
-
-//       // 2.1 Friendbot: fund all accounts
-//       const fundAccount = async (kp) => {
-//         const resp = await fetch(
-//           `https://friendbot.diamcircle.io?addr=${kp.publicKey()}`
-//         );
-//         if (resp.ok) {
-//           addLog(`Account ${kp.publicKey()} funded.`);
-//         } else {
-//           addLog(`Friendbot failed for ${kp.publicKey()}`);
-//         }
-//       };
-//       await fundAccount(data.nftIssuerKeypair);
-//       await fundAccount(data.distributorKeypair);
-//       await fundAccount(data.buyerKeypair);
-
-//       // 2.2 Let user pick tokenA and tokenB from the UI
-//       const assetA = parseTokenInput(tokenA);
-//       const assetB = parseTokenInput(tokenB);
-//       addLog(
-//         `Parsed token A = ${assetA.getCode()} / ${assetA.getIssuer() || "native"}`
-//       );
-//       addLog(
-//         `Parsed token B = ${assetB.getCode()} / ${assetB.getIssuer() || "native"}`
-//       );
-
-//       // 2.3 Establish trustlines for the custom asset (distributor, buyer)
-//       const establishTrustline = async (kp, asset) => {
-//         const acct = await server.loadAccount(kp.publicKey());
-//         const tx = new TransactionBuilder(acct, {
-//           fee: BASE_FEE,
-//           networkPassphrase: Networks.TESTNET,
-//         })
-//           .addOperation(Operation.changeTrust({ asset }))
-//           .setTimeout(30)
-//           .build();
-//         tx.sign(kp);
-//         const response = await server.submitTransaction(tx);
-//         addLog(`Trustline established for ${kp.publicKey()}: ${response.hash}`);
-//       };
-//       // Use assetB (which now should be equal to data.customAsset) for trustlines
-//       await establishTrustline(data.distributorKeypair, assetB);
-//       await establishTrustline(data.buyerKeypair, assetB);
-
-//       // 2.4 Issue asset from nftIssuer to distributor (payment of the custom asset)
-//       let acct = await server.loadAccount(data.nftIssuerKeypair.publicKey());
-//       let tx = new TransactionBuilder(acct, {
-//         fee: BASE_FEE,
-//         networkPassphrase: Networks.TESTNET,
-//       })
-//         .addOperation(
-//           Operation.payment({
-//             destination: data.distributorKeypair.publicKey(),
-//             asset: data.customAsset,
-//             amount: "100", // Adjust the amount as needed
-//           })
-//         )
-//         .setTimeout(30)
-//         .build();
-//       tx.sign(data.nftIssuerKeypair);
-//       let response = await server.submitTransaction(tx);
-//       addLog("Asset issued successfully: " + response.hash);
-
-//       // 2.5 Create Liquidity Pool (LP asset) for assetA + assetB using a default valid fee (e.g. 30)
-//       const defaultFee = 30;
-//       const lpAsset = new LiquidityPoolAsset(assetA, assetB, defaultFee);
-//       const liquidityPoolId = getLiquidityPoolId("constant_product", lpAsset).toString("hex");
-//       addLog("Liquidity Pool ID: " + liquidityPoolId);
-
-//       // Store lpAsset and liquidity pool details in state for later use in deposit/withdraw
-//       setData((prev) => ({
-//         ...prev,
-//         lpAsset,
-//         liquidityPoolId,
-//         liquidityPoolIdBuffer: new Uint8Array(Buffer.from(liquidityPoolId, "hex")),
-//       }));
-
-//       // Distributor must trust the LP asset
-//       acct = await server.loadAccount(data.distributorKeypair.publicKey());
-//       tx = new TransactionBuilder(acct, {
-//         fee: BASE_FEE,
-//         networkPassphrase: Networks.TESTNET,
-//       })
-//         .addOperation(Operation.changeTrust({ asset: lpAsset }))
-//         .setTimeout(30)
-//         .build();
-//       tx.sign(data.distributorKeypair);
-//       response = await server.submitTransaction(tx);
-//       addLog(`Trustline established for LP asset: ${response.hash}`);
-
-//       // 2.6 Upload Metadata to IPFS & store it on chain
-//       const pinata = new PinataSDK({
-//         pinataJwt:
-//           "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySW5mb3JtYXRpb24iOnsiaWQiOiJiNTc5OGJmMS00OThhLTRkZTgtODc1MS1hMDA1OWRiNWM5ZDciLCJlbWFpbCI6Im5pc2hnYWJhLmFpQGdtYWlsLmNvbSIsImVtYWlsX3ZlcmlmaWVkIjp0cnVlLCJwaW5fcG9saWN5Ijp7InJlZ2lvbnMiOlt7ImRlc2lyZWRSZXBsaWNhdGlvbkNvdW50IjoxLCJpZCI6IkZSQTEifSx7ImRlc2lyZWRSZXBsaWNhdGlvbkNvdW50IjoxLCJpZCI6Ik5ZQzEifV0sInZlcnNpb24iOjF9LCJtZmFfZW5hYmxlZCI6ZmFsc2UsInN0YXR1cyI6IkFDVElWRSJ9LCJhdXRoZW50aWNhdGlvblR5cGUiOiJzY29wZWRLZXkiLCJzY29wZWRLZXlLZXkiOiI2YTkxOGU2NmFjMGVkNTM4Yzk2YSIsInNjb3BlZEtleVNlY3JldCI6IjRlYzdkYjEyMGYzOTNjOGQ0ZmQ0MGRmNTU4YmMwNzEzMGExMGQ0NTQwYTMzYzVhYTFjMTIzNTVhNTQ4ZDgzYWYiLCJleHAiOjE3Njk0NjQ4NTN9.DYTlB2r8rPbpWzaWPGiaYyj9KJZwxEVV4LwYSreL9Uk",
-//         pinataGateway: "https://gateway.pinata.cloud",
-//       });
-//       const metadata = {
-//         name: `Position NFT for Pool ${liquidityPoolId}`,
-//         description: "This NFT represents a position in a liquidity pool.",
-//         poolId: liquidityPoolId,
-//         userPublicKey: data.distributorKeypair.publicKey(),
-//         positionDetails: {
-//           maxAmountA: "10",
-//           maxAmountB: "20",
-//           minPrice: { n: 1, d: 2 },
-//           maxPrice: { n: 2, d: 1 },
-//         },
-//         timestamp: new Date().toISOString(),
-//       };
-//       const metadataJSON = JSON.stringify(metadata);
-//       const blob = new Blob([metadataJSON], { type: "application/json" });
-//       const upload = await pinata.upload.file(blob, {
-//         fileName: `metadata_${Date.now()}.json`,
-//       });
-//       addLog("Metadata uploaded: " + JSON.stringify(upload));
-//       const metadataURI = upload.IpfsHash;
-//       addLog("Metadata URI: " + metadataURI);
-
-//       // Create NFT asset
-//       const distributorNFTName = `NFT${data.distributorKeypair.publicKey().slice(-4)}`;
-//       const distributorNFT = new Asset(
-//         distributorNFTName,
-//         data.nftIssuerKeypair.publicKey()
-//       );
-
-//       // Store IPFS hash on chain with manageData
-//       acct = await server.loadAccount(data.distributorKeypair.publicKey());
-//       tx = new TransactionBuilder(acct, {
-//         fee: BASE_FEE,
-//         networkPassphrase: Networks.TESTNET,
-//       })
-//         .addOperation(
-//           Operation.manageData({
-//             name: distributorNFTName.slice(0, 64),
-//             value: metadataURI,
-//           })
-//         )
-//         .setTimeout(30)
-//         .build();
-//       tx.sign(data.distributorKeypair);
-//       response = await server.submitTransaction(tx);
-//       addLog(`Metadata stored on-chain with key ${distributorNFTName.slice(0, 64)}: ${response.hash}`);
-
-//       // 2.7 Trustline for the NFT
-//       acct = await server.loadAccount(data.distributorKeypair.publicKey());
-//       tx = new TransactionBuilder(acct, {
-//         fee: BASE_FEE,
-//         networkPassphrase: Networks.TESTNET,
-//       })
-//         .addOperation(Operation.changeTrust({ asset: distributorNFT }))
-//         .setTimeout(30)
-//         .build();
-//       tx.sign(data.distributorKeypair);
-//       response = await server.submitTransaction(tx);
-//       addLog("Trustline established for distributor NFT: " + response.hash);
-
-//       // 2.8 Deposit Liquidity & Issue NFT
-//       const liquidityPoolIdBuffer = new Uint8Array(Buffer.from(liquidityPoolId, "hex"));
-//       // Also update state so liquidityPoolDeposit/Withdraw can use it
-//       setData((prev) => ({ ...prev, liquidityPoolIdBuffer }));
-//       acct = await server.loadAccount(data.distributorKeypair.publicKey());
-//       tx = new TransactionBuilder(acct, {
-//         fee: BASE_FEE,
-//         networkPassphrase: Networks.TESTNET,
-//       })
-//         .addOperation(
-//           Operation.liquidityPoolDeposit({
-//             liquidityPoolId: liquidityPoolIdBuffer,
-//             maxAmountA: "10",
-//             maxAmountB: "20",
-//             minPrice: { n: 1, d: 2 },
-//             maxPrice: { n: 2, d: 1 },
-//           })
-//         )
-//         .addOperation(
-//           Operation.payment({
-//             destination: data.distributorKeypair.publicKey(),
-//             asset: distributorNFT,
-//             amount: "1",
-//           })
-//         )
-//         .setTimeout(30)
-//         .build();
-//       tx.sign(data.distributorKeypair);
-//       response = await server.submitTransaction(tx);
-//       addLog("Liquidity deposited & NFT issued: " + response.hash);
-
-//       // 2.9 Query Pool Details
-//       let poolResp = await server.liquidityPools()
-//         .liquidityPoolId(liquidityPoolId)
-//         .call();
-//       addLog("Liquidity Pool Details: " + JSON.stringify(poolResp));
-
-//       // 2.10 Perform Swap
-//       acct = await server.loadAccount(data.buyerKeypair.publicKey());
-//       tx = new TransactionBuilder(acct, {
-//         fee: BASE_FEE,
-//         networkPassphrase: Networks.TESTNET,
-//       })
-//         .addOperation(
-//           Operation.pathPaymentStrictSend({
-//             sendAsset: Asset.native(),
-//             sendAmount: "10",
-//             destination: data.distributorKeypair.publicKey(),
-//             destAsset: assetB,
-//             destMin: "5",
-//             path: [],
-//           })
-//         )
-//         .setTimeout(30)
-//         .build();
-//       tx.sign(data.buyerKeypair);
-//       response = await server.submitTransaction(tx);
-//       addLog("Swap executed successfully: " + response.hash);
-
-//       addLog("All operations completed successfully.");
-//       setTransactionStatus("success");
-//       setTransactionMessage("All DEX operations done!");
-//     } catch (error) {
-//       console.error("Error in handleCreatePoolAndRun:", error);
-//       addLog("Error: " + error.toString());
-//       setTransactionStatus("error");
-//       setTransactionMessage(error.message || "Something went wrong");
-//     }
-//     setRunning(false);
-//   };
-
-//   // Additional functions to deposit and withdraw liquidity from the pool
-//   const liquidityPoolDeposit = async () => {
-//     if (!sdk || !server || !data.distributorKeypair || !data.lpAsset || !data.liquidityPoolIdBuffer) {
-//       addLog("Liquidity pool deposit prerequisites not met.");
-//       return;
-//     }
-//     try {
-//       const { TransactionBuilder, BASE_FEE, Networks, Operation } = sdk;
-//       // Establish trustline for LP asset (if not already done)
-//       // Here we assume establishTrustline is the same helper as before:
-//       const establishTrustline = async (kp, asset) => {
-//         const acct = await server.loadAccount(kp.publicKey());
-//         const tx = new TransactionBuilder(acct, {
-//           fee: BASE_FEE,
-//           networkPassphrase: Networks.TESTNET,
-//         })
-//           .addOperation(Operation.changeTrust({ asset }))
-//           .setTimeout(30)
-//           .build();
-//         tx.sign(kp);
-//         const resp = await server.submitTransaction(tx);
-//         addLog(`Trustline established for ${kp.publicKey()} (LP asset): ${resp.hash}`);
-//       };
-//       await establishTrustline(data.distributorKeypair, data.lpAsset);
-
-//       const distributorAccount = await server.loadAccount(data.distributorKeypair.publicKey());
-//       const transaction = new TransactionBuilder(distributorAccount, {
-//         fee: BASE_FEE,
-//         networkPassphrase: Networks.TESTNET,
-//       })
-//         .addOperation(
-//           Operation.liquidityPoolDeposit({
-//             liquidityPoolId: data.liquidityPoolIdBuffer,
-//             maxAmountA: "50",  // Maximum customAsset to deposit
-//             maxAmountB: "100", // Maximum XLM to deposit
-//             minPrice: { numerator: 1, denominator: 2 },
-//             maxPrice: { numerator: 2, denominator: 1 },
-//           })
-//         )
-//         .setTimeout(100)
-//         .build();
-
-//       transaction.sign(data.distributorKeypair);
-//       const response = await server.submitTransaction(transaction);
-//       addLog(`✅ Liquidity deposited (Tx: ${response.hash})`);
-//     } catch (error) {
-//       addLog(`❌ Liquidity pool deposit error: ${error?.response?.data || error}`);
-//     }
-//   };
-
-//   const liquidityPoolWithdraw = async () => {
-//     if (!sdk || !server || !data.distributorKeypair || !data.liquidityPoolIdBuffer) {
-//       addLog("Liquidity pool withdrawal prerequisites not met.");
-//       return;
-//     }
-//     try {
-//       const { TransactionBuilder, BASE_FEE, Networks, Operation } = sdk;
-//       const distributorAccount = await server.loadAccount(data.distributorKeypair.publicKey());
-//       const transaction = new TransactionBuilder(distributorAccount, {
-//         fee: BASE_FEE,
-//         networkPassphrase: Networks.TESTNET,
-//       })
-//         .addOperation(
-//           Operation.liquidityPoolWithdraw({
-//             liquidityPoolId: data.liquidityPoolIdBuffer,
-//             amount: "10",   // Number of pool shares to burn
-//             minAmountA: "1", // Minimum TradeToken to receive
-//             minAmountB: "1", // Minimum XLM to receive
-//           })
-//         )
-//         .setTimeout(100)
-//         .build();
-
-//       transaction.sign(data.distributorKeypair);
-//       const response = await server.submitTransaction(transaction);
-//       addLog(`✅ Liquidity withdrawn (Tx: ${response.hash})`);
-//     } catch (error) {
-//       addLog(`❌ Liquidity pool withdrawal error: ${error?.response?.data || error}`);
-//     }
-//   };
-
-//   return (
-//     <Container maxWidth="sm" sx={{ marginTop: "40px" }}>
-//       <Box
-//         sx={{
-//           backgroundColor: "rgba(0, 206, 229, 0.06)",
-//           margin: "2rem auto",
-//           borderRadius: "16px",
-//           border: "1px solid #FFFFFF4D",
-//           padding: "2rem",
-//           color: "#FFFFFF",
-//           boxShadow: "0 4px 20px rgba(0, 0, 0, 0.3)",
-//           position: "relative",
-//         }}
-//       >
-//         <Typography variant="h5" align="center" sx={{ mb: 4 }}>
-//           Create Liquidity Pool & Run DEX
-//         </Typography>
-
-//         <Box sx={{ mb: 3 }}>
-//           <Typography sx={{ mb: 1 }}>Token A:</Typography>
-//           <TextField
-//             fullWidth
-//             variant="outlined"
-//             value={tokenA}
-//             onChange={(e) => setTokenA(e.target.value)}
-//             placeholder='e.g. "native" or "MYTOKEN:GA..."'
-//             InputProps={{
-//               endAdornment: (
-//                 <InputAdornment position="end">
-//                   <AiOutlinePlusCircle size={24} color="#007bff" />
-//                 </InputAdornment>
-//               ),
-//               style: {
-//                 color: "#fff",
-//                 backgroundColor: "transparent",
-//                 borderRadius: "16px",
-//                 border: "1px solid #FFFFFF4D",
-//               },
-//             }}
-//           />
-//         </Box>
-
-//         <Box sx={{ mb: 3 }}>
-//           <Typography sx={{ mb: 1 }}>Token B:</Typography>
-//           <TextField
-//             fullWidth
-//             variant="outlined"
-//             value={tokenB}
-//             onChange={(e) => setTokenB(e.target.value)}
-//             placeholder='e.g. "native" or "TradeToken:GA..."'
-//             InputProps={{
-//               endAdornment: (
-//                 <InputAdornment position="end">
-//                   <AiOutlinePlusCircle size={24} color="#007bff" />
-//                 </InputAdornment>
-//               ),
-//               style: {
-//                 color: "#fff",
-//                 backgroundColor: "transparent",
-//                 borderRadius: "16px",
-//                 border: "1px solid #FFFFFF4D",
-//               },
-//             }}
-//           />
-//         </Box>
-
-//         <CustomButton
-//           variant="contained"
-//           fullWidth
-//           onClick={handleCreatePoolAndRun}
-//           disabled={running}
-//         >
-//           {running ? <CircularProgress size={24} /> : "Run Full DEX Workflow"}
-//         </CustomButton>
-
-//         {/* Buttons for deposit and withdrawal */}
-//         <Box sx={{ mt: 2, display: "flex", gap: 2 }}>
-//           <CustomButton
-//             variant="contained"
-//             fullWidth
-//             onClick={liquidityPoolDeposit}
-//             disabled={running}
-//           >
-//             Deposit Liquidity
-//           </CustomButton>
-//           <CustomButton
-//             variant="contained"
-//             fullWidth
-//             onClick={liquidityPoolWithdraw}
-//             disabled={running}
-//           >
-//             Withdraw Liquidity
-//           </CustomButton>
-//         </Box>
-//       </Box>
-
-//       {/* Render Logs */}
-//       <Box
-//         sx={{
-//           marginTop: "1rem",
-//           maxHeight: "200px",
-//           overflowY: "auto",
-//           backgroundColor: "#333",
-//           padding: "1rem",
-//           borderRadius: "8px",
-//         }}
-//       >
-//         {logs.map((log, index) => (
-//           <Typography key={index} variant="body2" sx={{ color: "#fff" }}>
-//             {log}
-//           </Typography>
-//         ))}
-//       </Box>
-
-//       <TransactionModal
-//         open={modalOpen}
-//         onClose={() => setModalOpen(false)}
-//         status={transactionStatus}
-//         message={transactionMessage}
-//         transactionHash=""
-//       />
-//     </Container>
-//   );
-// };
-
-// export default CreatePoolDEX;
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 // src/pages/CreatePoolPage.jsx
 import React, { useState, useEffect } from "react";
 import {
@@ -605,13 +28,14 @@ const CreatePoolPage = () => {
   const [logs, setLogs] = useState([]);
   const [poolDetails, setPoolDetails] = useState(null);
   const [modalOpen, setModalOpen] = useState(false);
-  const [transactionStatus, setTransactionStatus] = useState("");   // "pending", "success", "error"
+  const [transactionStatus, setTransactionStatus] = useState(""); // "pending", "success", "error"
   const [transactionMessage, setTransactionMessage] = useState("");
   const [transactionHash, setTransactionHash] = useState("");
 
   // Get connected wallet public key from localStorage
   const walletPublicKey = localStorage.getItem("diamPublicKey") || "";
-  if (!walletPublicKey) console.warn("No wallet public key found in localStorage.");
+  if (!walletPublicKey)
+    console.warn("No wallet public key found in localStorage.");
 
   // Diamnet SDK, server, and ephemeral issuer for our custom asset
   const [sdk, setSdk] = useState(null);
@@ -700,7 +124,10 @@ const CreatePoolPage = () => {
       } else {
         if (resp.status === 400) {
           const errorData = await resp.json();
-          if (errorData.detail && errorData.detail.includes("createAccountAlreadyExist")) {
+          if (
+            errorData.detail &&
+            errorData.detail.includes("createAccountAlreadyExist")
+          ) {
             addLog(`Account ${publicKey} already exists. Moving on...`);
             return;
           }
@@ -719,11 +146,11 @@ const CreatePoolPage = () => {
       return;
     }
     setLoading(true);
-     // Show modal
-     setModalOpen(true);
-     setTransactionStatus("pending");
-     setTransactionMessage("Starting liquidity pool creation...");
- 
+    // Show modal
+    setModalOpen(true);
+    setTransactionStatus("pending");
+    setTransactionMessage("Starting liquidity pool creation...");
+
     try {
       const {
         TransactionBuilder,
@@ -735,10 +162,9 @@ const CreatePoolPage = () => {
       } = sdk;
       setTransactionStatus("pending");
       setTransactionMessage("=== Starting pool creation flow ===");
-      
+
       addLog("=== Starting pool creation flow ===");
       addLog("Wallet Public Key: " + walletPublicKey);
-
 
       addLog("Fund: Starting friendbot funding for ephemeral issuer...");
       await friendbotFund(issuerKeypair.publicKey());
@@ -750,12 +176,22 @@ const CreatePoolPage = () => {
       // Parse tokens: Token A from UI; Token B is our custom asset
       addLog("Parsing Token A from input: " + tokenA);
       const assetA = parseTokenInput(tokenA);
-      addLog("Parsed Token A: " + assetA.getCode() + " / " + (assetA.getIssuer() || "native"));
+      addLog(
+        "Parsed Token A: " +
+          assetA.getCode() +
+          " / " +
+          (assetA.getIssuer() || "native")
+      );
 
       addLog("Creating custom asset for Token B...");
       const customAsset = new sdk.Asset("TradeToken", issuerKeypair.publicKey());
       const assetB = customAsset;
-      addLog("Parsed Token B (custom): " + assetB.getCode() + " / " + assetB.getIssuer());
+      addLog(
+        "Parsed Token B (custom): " +
+          assetB.getCode() +
+          " / " +
+          assetB.getIssuer()
+      );
 
       // Ensure asset types are assigned
       if (typeof assetA.getAssetType === "function" && !assetA.type) {
@@ -792,14 +228,37 @@ const CreatePoolPage = () => {
         const trustResponse = await server.submitTransaction(signedTrustTx);
         addLog("Custom asset trustline established. Tx Hash: " + trustResponse.hash);
       } catch (error) {
-        if (error.toString().includes("Cannot read properties of undefined (reading 'type')")) {
-          addLog("Warning: Trustline submission error (missing 'type'); assuming trustline is already established.");
+        if (
+          error.toString().includes("Cannot read properties of undefined (reading 'type')")
+        ) {
+          addLog(
+            "Warning: Trustline submission error (missing 'type'); assuming trustline is already established."
+          );
         } else {
           throw error;
         }
       }
 
-      // 2. Issue the custom asset from ephemeral issuer to user's wallet
+      // 2. Clear the auth_required flag on the issuer account so that trustlines auto-authorize
+      addLog("Loading issuer account for options update...");
+      const issuerAccountForOptions = await server.loadAccount(issuerKeypair.publicKey());
+      addLog("Building setOptions transaction to clear auth_required flag...");
+      const optionsTx = new TransactionBuilder(issuerAccountForOptions, {
+        fee: BASE_FEE,
+        networkPassphrase: NETWORK_PASSPHRASE,
+      })
+        .addOperation(
+          Operation.setOptions({
+            clearFlags: sdk.AuthRequiredFlag, // Ensure this constant matches your SDK's naming
+          })
+        )
+        .setTimeout(30)
+        .build();
+      optionsTx.sign(issuerKeypair);
+      const optionsResponse = await server.submitTransaction(optionsTx);
+      addLog("Issuer account updated: auth_required flag cleared. Tx Hash: " + optionsResponse.hash);
+
+      // 3. Issue the custom asset from ephemeral issuer to user's wallet
       addLog("Loading issuer account for asset issuance...");
       let issuerAccount = await server.loadAccount(issuerKeypair.publicKey());
       addLog("Issuer account loaded.");
@@ -824,7 +283,7 @@ const CreatePoolPage = () => {
       let paymentRes = await server.submitTransaction(paymentTx);
       addLog("Asset issued to wallet. Tx Hash: " + paymentRes.hash);
 
-      // 3. Create liquidity pool for assetA and assetB
+      // 4. Create liquidity pool for assetA and assetB
       addLog("Creating liquidity pool asset for Token A and custom Token B...");
       const defaultFee = 30;
       const lpAsset = new LiquidityPoolAsset(assetA, assetB, defaultFee);
@@ -858,12 +317,10 @@ const CreatePoolPage = () => {
         addLog("Attached liquidityPoolId to LP Asset.");
       }
 
-      // 4. Establish trustline for LP asset on user's account using helper function
+      // 5. Establish trustline for LP asset on user's account using helper function
       addLog("Establishing LP asset trustline using helper function...");
+      let lpTrustResponse;
       try {
-        // If the wallet's keypair is not available, you may use a manual submission method
-        // Here, we assume window.diam can sign on behalf of the connected wallet.
-        // We'll load the wallet account and build a changeTrust op for the lpAsset.
         let lpUserAccount = await server.loadAccount(walletPublicKey);
         const lpTrustTx = new TransactionBuilder(lpUserAccount, {
           fee: BASE_FEE,
@@ -875,14 +332,42 @@ const CreatePoolPage = () => {
         const lpTrustXDR = lpTrustTx.toXDR();
         addLog("LP Trustline XDR (helper): " + lpTrustXDR);
         const signedLpTrustTx = await window.diam.sign(lpTrustXDR, true, NETWORK_PASSPHRASE);
-        const lpTrustResponse = await server.submitTransaction(signedLpTrustTx);
+        lpTrustResponse = await server.submitTransaction(signedLpTrustTx);
         addLog("LP asset trustline established. Tx Hash: " + lpTrustResponse.hash);
       } catch (error) {
         addLog("Error establishing LP trustline via helper: " + error.toString());
         addLog("Assuming LP trustline is manually established.");
       }
 
-      // 5. Save pool details for later deposit/withdraw
+      // 6. **Deposit liquidity** into the pool
+      // To have the pool show reserves of 10 (native) and 20 (TradeToken),
+      // deposit these amounts into the pool.
+      addLog("Depositing liquidity: 10 native and 20 TradeToken...");
+      try {
+        let userForDeposit = await server.loadAccount(walletPublicKey);
+        const depositTx = new TransactionBuilder(userForDeposit, {
+          fee: BASE_FEE,
+          networkPassphrase: NETWORK_PASSPHRASE,
+        })
+          .addOperation(
+            Operation.liquidityPoolDeposit({
+              liquidityPoolId: new Uint8Array(Buffer.from(liquidityPoolId, "hex")),
+              maxAmountA: "10", // Amount for assetA (native)
+              maxAmountB: "20", // Amount for assetB (TradeToken)
+              minPrice: { n: 1, d: 2 },
+              maxPrice: { n: 2, d: 1 },
+            })
+          )
+          .setTimeout(30)
+          .build();
+        const signedDepositTx = await window.diam.sign(depositTx.toXDR(), true, NETWORK_PASSPHRASE);
+        const depositResponse = await server.submitTransaction(signedDepositTx);
+        addLog("Liquidity deposit successful. Tx Hash: " + depositResponse.hash);
+      } catch (error) {
+        addLog("Error during liquidity deposit: " + error.toString());
+      }
+
+      // 7. Save pool details for later deposit/withdraw operations
       let liquidityPoolIdBuffer = null;
       if (liquidityPoolId !== "N/A") {
         liquidityPoolIdBuffer = new Uint8Array(Buffer.from(liquidityPoolId, "hex"));
@@ -892,11 +377,10 @@ const CreatePoolPage = () => {
         addLog("Fallback: using empty buffer for LiquidityPoolIdBuffer.");
       }
       const details = { lpAsset, liquidityPoolId, liquidityPoolIdBuffer };
-      
       setPoolDetails(details);
       setTransactionStatus("success");
       setTransactionMessage(`Pool created successfully. Pool ID: ${liquidityPoolId}`);
-      setTransactionHash(lpTrustRes.hash);
+      setTransactionHash(lpTrustResponse ? lpTrustResponse.hash : "N/A");
       addLog("Liquidity Pool created successfully. Details saved.");
       addLog("=== Pool creation flow completed ===");
 
@@ -904,7 +388,6 @@ const CreatePoolPage = () => {
       addLog("Error creating pool: " + error.toString());
     }
     setLoading(false);
-
   };
 
   return (
@@ -965,8 +448,7 @@ const CreatePoolPage = () => {
           disabled={loading}
           fullWidth
           variant="contained"
-          style={{ mt: 1 }}
-         
+          style={{ marginTop: "1rem" }}
         >
           {loading ? <CircularProgress size={24} /> : "Create Pool"}
         </CustomButton>
@@ -975,7 +457,7 @@ const CreatePoolPage = () => {
       <TransactionModal
         open={modalOpen}
         onClose={() => setModalOpen(false)}
-        status={transactionStatus}       
+        status={transactionStatus}
         message={transactionMessage}
         transactionHash={transactionHash}
       />
@@ -984,24 +466,3 @@ const CreatePoolPage = () => {
 };
 
 export default CreatePoolPage;
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
