@@ -3,39 +3,80 @@ import React, { useState, useEffect } from "react";
 import {
   Asset,
   Aurora,
-  Keypair,
   Operation,
   TransactionBuilder,
   BASE_FEE,
-  Networks,
-  getLiquidityPoolId,
   LiquidityPoolAsset,
 } from "diamnet-sdk";
 import { Buffer } from "buffer";
 import {
   Container,
   Box,
+  Card,
+  CardContent,
+  CardActions,
   Typography,
   TextField,
   CircularProgress,
+  MenuItem,
+  Select,
+  InputLabel,
+  FormControl,
 } from "@mui/material";
+import { styled } from "@mui/material/styles";
 import CustomButton from "../../comman/CustomButton";
 import TransactionModal from "../../comman/TransactionModal";
+// Using PinataSDK from pinata-web3 is not needed here as we call the REST API directly.
+import { PinataSDK } from "pinata-web3";
 
 // Polyfill Buffer if needed
 if (!window.Buffer) {
   window.Buffer = Buffer;
 }
 
-// Configuration
+// ---------------------------------------------
+// Configuration & Setup
+// ---------------------------------------------
 const NETWORK_PASSPHRASE = "Diamante Testnet 2024";
 const friendbotUrl = "https://friendbot.diamcircle.io?addr=";
 const server = new Aurora.Server("https://diamtestnet.diamcircle.io/");
 
-const realIssuerPubKey = "GBPTZYVUREREXTENTMWDB2PHJSSXLX4VHDPMA5O56MDNNJTA752EKS7X";
-const tradeToken = new Asset("TradeToken", realIssuerPubKey);
+// Hard-coded issuer public key (fallback) for TradeToken.
+const realIssuerPubKey =
+  "GBPTZYVUREREXTENTMWDB2PHJSSXLX4VHDPMA5O56MDNNJTA752EKS7X";
+// Pre-create the fallback tradeToken asset.
+const fallbackTradeToken = new Asset("TradeToken", realIssuerPubKey);
 
 
+// ---------------------------------------------
+// Helper: Update Transaction History via Pinata REST API and Local Storage
+// ---------------------------------------------
+async function updateTransactionHistory(transactionData) {
+  const PINATA_JWT =
+    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySW5mb3JtYXRpb24iOnsiaWQiOiJiNTc5OGJmMS00OThhLTRkZTgtODc1MS1hMDA1OWRiNWM5ZDciLCJlbWFpbCI6Im5pc2hnYWJhLmFpQGdtYWlsLmNvbSIsImVtYWlsX3ZlcmlmaWVkIjp0cnVlLCJwaW5fcG9saWN5Ijp7InJlZ2lvbnMiOlt7ImRlc2lyZWRSZXBsaWNhdGlvbkNvdW50IjoxLCJpZCI6IkZSQTEifSx7ImRlc2lyZWRSZXBsaWNhdGlvbkNvdW50IjoxLCJpZCI6Ik5ZQzEifV0sInZlcnNpb24iOjF9LCJtZmFfZW5hYmxlZCI6ZmFsc2UsInN0YXR1cyI6IkFDVElWRSJ9LCJhdXRoZW50aWNhdGlvblR5cGUiOiJzY29wZWRLZXkiLCJzY29wZWRLZXlLZXkiOiI2YTkxOGU2NmFjMGVkNTM4Yzk2YSIsInNjb3BlZEtleVNlY3JldCI6IjRlYzdkYjEyMGYzOTNjOGQ0ZmQ0MGRmNTU4YmMwNzEzMGExMGQ0NTQwYTMzYzVhYTFjMTIzNTVhNTQ4ZDgzYWYiLCJleHAiOjE3Njk0NjQ4NTN9.DYTlB2r8rPbpWzaWPGiaYyj9KJZwxEVV4LwYSreL9Uk";
+  try {
+    const response = await fetch("https://api.pinata.cloud/pinning/pinJSONToIPFS", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${PINATA_JWT}`,
+      },
+      body: JSON.stringify({ pinataContent: transactionData }),
+    });
+    const result = await response.json();
+    console.log("Pinned transaction data to IPFS:", result);
+    const history = JSON.parse(localStorage.getItem("txHistory") || "[]");
+    history.push({ ...transactionData, ipfsHash: result.IpfsHash });
+    localStorage.setItem("txHistory", JSON.stringify(history));
+    return result;
+  } catch (error) {
+    console.error("Error pinning transaction data to Pinata:", error);
+  }
+}
+
+// ---------------------------------------------
+// Diamnet Transaction Functions
+// ---------------------------------------------
 const friendbotFund = async (publicKey) => {
   try {
     const resp = await fetch(`${friendbotUrl}${publicKey}`);
@@ -59,13 +100,12 @@ const friendbotFund = async (publicKey) => {
   }
 };
 
-const lpAsset = new LiquidityPoolAsset(Asset.native(), tradeToken, 30);
+
 const establishUserTrustline = async (asset, walletPublicKey) => {
   if (!walletPublicKey) {
     throw new Error("Wallet not connected. Please connect your wallet.");
   }
   const userAccount = await server.loadAccount(walletPublicKey);
-  // Increased timeout to 300 seconds to avoid "tx_too_late" errors.
   const trustTx = new TransactionBuilder(userAccount, {
     fee: BASE_FEE,
     networkPassphrase: NETWORK_PASSPHRASE,
@@ -78,47 +118,87 @@ const establishUserTrustline = async (asset, walletPublicKey) => {
     )
     .setTimeout(300)
     .build();
+
   console.log("User Trustline Transaction XDR:", trustTx.toXDR());
-  const trustResult = await window.diam.sign(trustTx.toXDR(), true, NETWORK_PASSPHRASE);
+  const trustResult = await window.diam.sign(
+    trustTx.toXDR(),
+    true,
+    NETWORK_PASSPHRASE
+  );
   console.log("User Trustline sign response:", trustResult);
+
   const response = await server.submitTransaction(trustTx);
   console.log("Trustline established. Tx Hash:", response.hash);
   return response.hash;
 };
 
-const getAssetObject = (assetName) => {
+// ---------------------------------------------
+// Dynamic TradeToken Issuer Helper
+// ---------------------------------------------
+function getDynamicTradeTokenIssuer(accountData, threshold = 1) {
+  if (!accountData || !accountData.balances) return null;
+  // Filter for balances with asset_code "TradeToken" and a balance greater than threshold.
+  const activeTokens = accountData.balances.filter((balance) => {
+    return (
+      balance.asset_code === "TradeToken" &&
+      parseFloat(balance.balance) > threshold
+    );
+  });
+  if (activeTokens.length === 0) return null;
+  // Sort by descending balance to take the highest available
+  activeTokens.sort((a, b) => parseFloat(b.balance) - parseFloat(a.balance));
+  return activeTokens[0].asset_issuer;
+}
+
+const getAssetObject = (assetName, dynamicIssuer = null) => {
   if (assetName === "DIAM") {
     return Asset.native();
   } else if (assetName === "TradeToken") {
-    return tradeToken;
+    if (dynamicIssuer) {
+      return new Asset("TradeToken", dynamicIssuer);
+    } else {
+      return;
+    }
   }
   throw new Error(`Unknown asset: ${assetName}`);
 };
 
-const doStrictSendSwap = async (walletPublicKey, fromAsset, toAsset, sendAmount, destMin) => {
+const doStrictSendSwap = async (
+  walletPublicKey,
+  fromAsset,
+  toAsset,
+  sendAmount,
+  destMin,
+  dynamicIssuer = null
+) => {
   const userAccount = await server.loadAccount(walletPublicKey);
-  // Increased timeout to 300 seconds.
   const swapTx = new TransactionBuilder(userAccount, {
     fee: BASE_FEE,
     networkPassphrase: NETWORK_PASSPHRASE,
   })
     .addOperation(
       Operation.pathPaymentStrictSend({
-        sendAsset: getAssetObject(fromAsset),
+        sendAsset: getAssetObject(fromAsset, dynamicIssuer),
         sendAmount,
         destination: walletPublicKey,
-        destAsset: getAssetObject(toAsset),
+        destAsset: getAssetObject(toAsset, dynamicIssuer),
         destMin,
         path: [],
       })
     )
     .setTimeout(300)
     .build();
+
   console.log("Strict Send Swap Transaction XDR:", swapTx.toXDR());
   if (!window.diam || typeof window.diam.sign !== "function") {
     throw new Error("DIAM Wallet extension not available for signing.");
   }
-  const signResult = await window.diam.sign(swapTx.toXDR(), true, NETWORK_PASSPHRASE);
+
+  const signResult = await window.diam.sign(
+    swapTx.toXDR(),
+    true,
+    NETWORK_PASSPHRASE
+  );
   console.log("Strict Send Swap sign response:", signResult);
 
   if (
@@ -141,32 +221,44 @@ const doStrictSendSwap = async (walletPublicKey, fromAsset, toAsset, sendAmount,
   return finalHash || null;
 };
 
-// Swap Operation: Strict Receive
-const doStrictReceiveSwap = async (walletPublicKey, fromAsset, toAsset, sendMax, destAmount) => {
+const doStrictReceiveSwap = async (
+  walletPublicKey,
+  fromAsset,
+  toAsset,
+  sendMax,
+  destAmount,
+  dynamicIssuer = null
+) => {
   const userAccount = await server.loadAccount(walletPublicKey);
-  // Increased timeout to 300 seconds.
   const swapTx = new TransactionBuilder(userAccount, {
     fee: BASE_FEE,
     networkPassphrase: NETWORK_PASSPHRASE,
   })
     .addOperation(
       Operation.pathPaymentStrictReceive({
-        sendAsset: getAssetObject(fromAsset),
+        sendAsset: getAssetObject(fromAsset, dynamicIssuer),
         sendMax,
         destination: walletPublicKey,
-        destAsset: getAssetObject(toAsset),
+        destAsset: getAssetObject(toAsset, dynamicIssuer),
         destAmount,
         path: [],
       })
     )
     .setTimeout(300)
     .build();
+
   console.log("Strict Receive Swap Transaction XDR:", swapTx.toXDR());
   if (!window.diam || typeof window.diam.sign !== "function") {
     throw new Error("DIAM Wallet extension not available for signing.");
   }
-  const signResult = await window.diam.sign(swapTx.toXDR(), true, NETWORK_PASSPHRASE);
+
+  const signResult = await window.diam.sign(
+    swapTx.toXDR(),
+    true,
+    NETWORK_PASSPHRASE
+  );
   console.log("Strict Receive Swap sign response:", signResult);
+
   let finalHash = signResult.hash;
   if (!finalHash && signResult.message?.data?.hash) {
     finalHash = signResult.message.data.hash;
@@ -175,78 +267,16 @@ const doStrictReceiveSwap = async (walletPublicKey, fromAsset, toAsset, sendMax,
   return finalHash || null;
 };
 
-// Liquidity Pool Deposit Operation
-const liquidityPoolDeposit = async (walletPublicKey, lpIdInput, depositNative, depositCustom) => {
-  if (!walletPublicKey) throw new Error("No wallet connected.");
-  if (!lpIdInput) throw new Error("Please enter a Liquidity Pool ID (hex).");
-  const liquidityPoolIdBuffer = new Uint8Array(Buffer.from(lpIdInput, "hex"));
-  const account = await server.loadAccount(walletPublicKey);
-  // Increased timeout to 300 seconds.
-  const tx = new TransactionBuilder(account, {
-    fee: BASE_FEE,
-    networkPassphrase: NETWORK_PASSPHRASE,
-  })
-    .addOperation(
-      Operation.liquidityPoolDeposit({
-        liquidityPoolId: liquidityPoolIdBuffer,
-        maxAmountA: depositNative,
-        maxAmountB: depositCustom,
-        minPrice: { n: 1, d: 2 },
-        maxPrice: { n: 2, d: 1 },
-      })
-    )
-    .setTimeout(300)
-    .build();
-  console.log("Liquidity deposit transaction built. XDR:", tx.toXDR());
-  if (!window.diam || typeof window.diam.sign !== "function") {
-    throw new Error("DIAM Wallet extension not available for signing.");
-  }
-  const signResult = await window.diam.sign(tx.toXDR(), true, NETWORK_PASSPHRASE);
-  console.log("Deposit sign result:", signResult);
-  const response = await server.submitTransaction(tx);
-  console.log("Liquidity deposit response:", response);
-  return response.hash;
-};
-
-// Liquidity Pool Withdraw Operation
-const liquidityPoolWithdraw = async (walletPublicKey, lpIdInput, burnShares, minCustom, minNative) => {
-  if (!walletPublicKey) throw new Error("No wallet connected.");
-  if (!lpIdInput) throw new Error("Please enter a Liquidity Pool ID (hex).");
-  const liquidityPoolIdBuffer = new Uint8Array(Buffer.from(lpIdInput, "hex"));
-  const account = await server.loadAccount(walletPublicKey);
-  // Increased timeout to 300 seconds.
-  const tx = new TransactionBuilder(account, {
-    fee: BASE_FEE,
-    networkPassphrase: NETWORK_PASSPHRASE,
-  })
-    .addOperation(
-      Operation.liquidityPoolWithdraw({
-        liquidityPoolId: liquidityPoolIdBuffer,
-        amount: burnShares,
-        minAmountA: minNative,
-        minAmountB: minCustom,
-      })
-    )
-    .setTimeout(300)
-    .build();
-  console.log("Liquidity withdraw transaction built. XDR:", tx.toXDR());
-  if (!window.diam || typeof window.diam.sign !== "function") {
-    throw new Error("DIAM Wallet extension not available for signing.");
-  }
-  const signResult = await window.diam.sign(tx.toXDR(), true, NETWORK_PASSPHRASE);
-  console.log("Withdraw sign result:", signResult);
-  const response = await server.submitTransaction(tx);
-  console.log("Liquidity withdraw response:", response);
-  return response.hash;
-};
-
+// ---------------------------------------------
+// Component: SwapPage
+// ---------------------------------------------
 export default function SwapPage() {
-  // On mount, fund the issuer account
+  // Optionally, fund the issuer account if needed.
   useEffect(() => {
     async function fundIssuer() {
       try {
-        await friendbotFund(issuerKeypair.publicKey());
-        console.log("Issuer account funded:", issuerKeypair.publicKey());
+        // Uncomment and add issuer funding if required.
+        // await friendbotFund(issuerPublicKey);
       } catch (e) {
         console.error("Failed to fund issuer:", e);
       }
@@ -254,106 +284,152 @@ export default function SwapPage() {
     fundIssuer();
   }, []);
 
-  // Swap State
+  // Component state.
   const [fromAsset, setFromAsset] = useState("DIAM");
   const [toAsset, setToAsset] = useState("TradeToken");
   const [sendAmount, setSendAmount] = useState("");
   const [price, setPrice] = useState("");
-  const [destMin, setDestMin] = useState("");
   const [txStatus, setTxStatus] = useState("");
   const [loading, setLoading] = useState(false);
-
-  // Transaction Modal State
   const [modalOpen, setModalOpen] = useState(false);
   const [transactionStatus, setTransactionStatus] = useState("");
   const [transactionMessage, setTransactionMessage] = useState("");
   const [transactionHash, setTransactionHash] = useState("");
+  const [walletPublicKey] = useState(() => localStorage.getItem("diamPublicKey") || "");
+  
+  // This state will store the dynamic issuer (if found from account balances).
+  const [dynamicIssuer, setDynamicIssuer] = useState(null);
 
-  // Wallet public key from localStorage
-  const [walletPublicKey, setWalletPublicKey] = useState(
-    () => localStorage.getItem("diamPublicKey") || ""
-  );
-
-  // Estimated Received Calculation
   const estimatedReceived =
     sendAmount && price
       ? (parseFloat(sendAmount) * parseFloat(price)).toFixed(7)
       : "";
 
-  // Liquidity Pool State
-  const [lpIdInput, setLpIdInput] = useState("c63c90f6c1d1887740d181397b4051e70504fc9be3d31b603a2a7062dbffd4a4"); // Validated pool ID
-  const [depositNative, setDepositNative] = useState("");
-  const [depositCustom, setDepositCustom] = useState("");
-  const [burnShares, setBurnShares] = useState("");
-  const [minCustom, setMinCustom] = useState("");
-  const [minNative, setMinNative] = useState("");
-  const [lpTxStatus, setLpTxStatus] = useState("");
-  const [lpLoading, setLpLoading] = useState(false);
-
-  // Input Handlers
-  const handleSendAmountChange = (e) => setSendAmount(e.target.value.replace(/[^0-9.]/g, ""));
-  const handlePriceChange = (e) => setPrice(e.target.value.replace(/[^0-9.]/g, ""));
+  // Input handlers.
+  const handleSendAmountChange = (e) =>
+    setSendAmount(e.target.value.replace(/[^0-9.]/g, ""));
+  const handlePriceChange = (e) =>
+    setPrice(e.target.value.replace(/[^0-9.]/g, ""));
   const handleFromAssetChange = (e) => setFromAsset(e.target.value);
   const handleToAssetChange = (e) => setToAsset(e.target.value);
 
-  // Swap Flow: Strict Send Swap
+  // ---------------------------------------------
+  // useEffect: Fetch account details and dynamically determine TradeToken issuer
+  // ---------------------------------------------
+  useEffect(() => {
+    // Only run if a walletPublicKey is available.
+    if (!walletPublicKey) return;
+    async function loadAccountData() {
+      try {
+        // Fetch account data from Diamtestnet.
+        const account = await server.accounts().accountId(walletPublicKey).call();
+        console.log("Loaded account data:", account);
+        // Use helper function to get TradeToken issuer with balance > 1.
+        const issuer = getDynamicTradeTokenIssuer(account, 1);
+        if (issuer) {
+          console.log("Dynamic TradeToken issuer found:", issuer);
+          setDynamicIssuer(issuer);
+        } else {
+          console.log("No TradeToken with balance > 1 found; falling back.");
+          setDynamicIssuer(null);
+        }
+      } catch (error) {
+        console.error("Error loading account data:", error);
+      }
+    }
+    loadAccountData();
+  }, [walletPublicKey]);
+
+  // Swap Flow: Strict Send Swap.
   const handleStrictSendSwapClick = async () => {
     setLoading(true);
     setTxStatus("Starting strict send swap flow...");
     setModalOpen(true);
     setTransactionStatus("pending");
     setTransactionMessage("Processing strict send swap...");
+
     try {
       if (fromAsset === "TradeToken" || toAsset === "TradeToken") {
         setTransactionMessage("Establishing trustline for TradeToken...");
-        await establishUserTrustline(tradeToken, walletPublicKey);
+        // Use the dynamic issuer if available.
+        await establishUserTrustline(
+          getAssetObject("TradeToken", dynamicIssuer),
+          walletPublicKey
+        );
       }
       setTransactionMessage("Funding wallet via Friendbot...");
       await friendbotFund(walletPublicKey);
+
       const slippageTolerance = 0.95;
       const safeSendAmount =
-        sendAmount && parseFloat(sendAmount) > 0 ? parseFloat(sendAmount).toFixed(7) : "1.0000000";
+        sendAmount && parseFloat(sendAmount) > 0
+          ? parseFloat(sendAmount).toFixed(7)
+          : "1.0000000";
       const computedEstimated = estimatedReceived ? parseFloat(estimatedReceived) : 0;
       const safeDestMin =
-        computedEstimated > 0 ? (computedEstimated * slippageTolerance).toFixed(7) : "0.0100000";
+        computedEstimated > 0
+          ? (computedEstimated * slippageTolerance).toFixed(7)
+          : "0.0100000";
+
       const swapHash = await doStrictSendSwap(
         walletPublicKey,
         fromAsset,
         toAsset,
         safeSendAmount,
-        safeDestMin
+        safeDestMin,
+        dynamicIssuer
       );
       console.log("Strict Send Swap final hash:", swapHash);
+
       const finalHash = swapHash || "N/A";
       setTxStatus(`Transaction successful! Hash: ${finalHash}`);
       setTransactionStatus("success");
       setTransactionMessage("Strict send swap completed successfully!");
       setTransactionHash(finalHash);
+
+      // Build transaction history data.
+      const transactionData = {
+        txHash: finalHash,
+        fromAsset,
+        toAsset,
+        sendAmount,
+        price,
+        estimatedReceived,
+        timestamp: new Date().toISOString(),
+      };
+
+      await updateTransactionHistory(transactionData);
     } catch (error) {
       console.error("Strict send swap flow error:", error);
       setTxStatus(`Error: ${error.message || error}`);
       setTransactionStatus("error");
-      setTransactionMessage(`Error in strict send swap flow: ${error.message || error}`);
+      setTransactionMessage(
+        `Error in strict send swap flow: ${error.message || error}`
+      );
     } finally {
       setLoading(false);
     }
   };
 
-  // Swap Flow: Strict Receive Swap
+  // Swap Flow: Strict Receive Swap.
   const handleStrictReceiveSwapClick = async () => {
     setLoading(true);
     setTxStatus("Starting strict receive swap flow...");
     setModalOpen(true);
     setTransactionStatus("pending");
     setTransactionMessage("Processing strict receive swap...");
+
     try {
       if (fromAsset === "TradeToken" || toAsset === "TradeToken") {
         setTransactionMessage("Establishing trustline for TradeToken...");
-        await establishUserTrustline(tradeToken, walletPublicKey);
+        await establishUserTrustline(
+          getAssetObject("TradeToken", dynamicIssuer),
+          walletPublicKey
+        );
       }
       setTransactionMessage("Funding wallet via Friendbot...");
       await friendbotFund(walletPublicKey);
-      setTransactionMessage("Performing strict receive swap...");
+
       const safeDestAmount =
         estimatedReceived && parseFloat(estimatedReceived) > 0
           ? parseFloat(estimatedReceived).toFixed(7)
@@ -362,346 +438,170 @@ export default function SwapPage() {
         sendAmount && parseFloat(sendAmount) > 0
           ? parseFloat(sendAmount).toFixed(7)
           : "1000.0000000";
+
       const swapHash = await doStrictReceiveSwap(
         walletPublicKey,
         fromAsset,
         toAsset,
         safeSendMax,
-        safeDestAmount
+        safeDestAmount,
+        dynamicIssuer
       );
       console.log("Strict Receive Swap final hash:", swapHash);
+
       const finalHash = swapHash || "N/A";
       setTxStatus(`Transaction successful! Hash: ${finalHash}`);
       setTransactionStatus("success");
       setTransactionMessage("Strict receive swap completed successfully!");
       setTransactionHash(finalHash);
+
+      const transactionData = {
+        txHash: finalHash,
+        fromAsset,
+        toAsset,
+        sendAmount,
+        price,
+        estimatedReceived,
+        timestamp: new Date().toISOString(),
+      };
+
+      await updateTransactionHistory(transactionData);
     } catch (error) {
       console.error("Strict receive swap flow error:", error);
       setTxStatus(`Error: ${error.message || error}`);
       setTransactionStatus("error");
-      setTransactionMessage(`Error in strict receive swap flow: ${error.message || error}`);
+      setTransactionMessage(
+        `Error in strict receive swap flow: ${error.message || error}`
+      );
     } finally {
       setLoading(false);
     }
   };
 
-  // Liquidity Pool Deposit Handler
-  const handleLiquidityDepositClick = async () => {
-    setLpLoading(true);
-    setTxStatus("Starting liquidity deposit...");
-    setModalOpen(true);
-    setTransactionStatus("pending");
-    setTransactionMessage("Processing liquidity deposit...");
-    try {
-      setTransactionMessage("Funding wallet via Friendbot...");
-      await friendbotFund(walletPublicKey);
-      setTransactionMessage("Establishing trustline for LP asset...");
-      await establishUserTrustline(lpAsset, walletPublicKey);
-      const depositHash = await liquidityPoolDeposit(
-        walletPublicKey,
-        lpIdInput,
-        depositNative,
-        depositCustom
-      );
-      console.log("Liquidity deposit successful. Tx Hash:", depositHash);
-      setTxStatus(`Deposit successful! Tx Hash: ${depositHash}`);
-      setTransactionStatus("success");
-      setTransactionMessage("Liquidity deposited successfully!");
-      setTransactionHash(depositHash);
-    } catch (error) {
-      console.error("Liquidity deposit error:", error);
-      setTxStatus(`Error: ${error.message || error}`);
-      setTransactionStatus("error");
-      setTransactionMessage(`Liquidity deposit error: ${error.message || error}`);
-    } finally {
-      setLpLoading(false);
-    }
-  };
-
-  // Liquidity Pool Withdraw Handler
-  const handleLiquidityWithdrawClick = async () => {
-    setLpLoading(true);
-    setTxStatus("Starting liquidity withdrawal...");
-    setModalOpen(true);
-    setTransactionStatus("pending");
-    setTransactionMessage("Processing liquidity withdrawal...");
-    try {
-      setTransactionMessage("Funding wallet via Friendbot...");
-      await friendbotFund(walletPublicKey);
-      const withdrawHash = await liquidityPoolWithdraw(
-        walletPublicKey,
-        lpIdInput,
-        burnShares,
-        minCustom,
-        minNative
-      );
-      console.log("Liquidity withdrawal successful. Tx Hash:", withdrawHash);
-      setTxStatus(`Withdrawal successful! Tx Hash: ${withdrawHash}`);
-      setTransactionStatus("success");
-      setTransactionMessage("Liquidity withdrawn successfully!");
-      setTransactionHash(withdrawHash);
-    } catch (error) {
-      console.error("Liquidity withdrawal error:", error);
-      setTxStatus(`Error: ${error.message || error}`);
-      setTransactionStatus("error");
-      setTransactionMessage(`Liquidity withdrawal error: ${error.message || error}`);
-    } finally {
-      setLpLoading(false);
-    }
-  };
-
   return (
-    <Container maxWidth="sm" sx={{ marginTop: "40px" }}>
-      {/* Swap Section */}
-      <Box
+    <Container maxWidth="sm" sx={{ marginTop: "40px", marginBottom: "40px" }}>
+      <Card
         sx={{
-          backgroundColor: "rgba(0,206,229,0.06)",
-          margin: "2rem auto",
+          backgroundColor: "rgba(0, 206, 229, 0.06)",
           borderRadius: "16px",
           border: "1px solid #FFFFFF4D",
-          padding: "2rem",
-          color: "#FFFFFF",
           boxShadow: "0 4px 20px rgba(0,0,0,0.3)",
-          position: "relative",
-          marginBottom: "2rem",
+          mb: 4,
         }}
       >
-        <Typography variant="h5" align="center" sx={{ mb: 4 }}>
-          Swap
-        </Typography>
-        <Box sx={{ mb: 2 }}>
-          <Typography variant="subtitle2">From Asset:</Typography>
-          <select
-            value={fromAsset}
-            onChange={handleFromAssetChange}
-            style={{
-              width: "100%",
-              padding: "8px",
-              borderRadius: "8px",
-              backgroundColor: "#000",
-              color: "#fff",
-              border: "1px solid #FFFFFF4D",
+        <CardContent>
+          <Box sx={{ mb: 2 }}>
+            <FormControl fullWidth variant="filled" sx={{ mb: 2 }}>
+              <InputLabel sx={{ color: "#ffffffcc" }}>From Asset</InputLabel>
+              <Select
+                value={fromAsset}
+                onChange={handleFromAssetChange}
+                sx={{
+                  color: "#fff",
+                  backgroundColor: "#000000",
+                  borderRadius: 1,
+                  "& .MuiSvgIcon-root": { color: "#fff" },
+                }}
+              >
+                <MenuItem value="DIAM">DIAM</MenuItem>
+                <MenuItem value="TradeToken">TradeToken</MenuItem>
+              </Select>
+            </FormControl>
+
+            <FormControl fullWidth variant="filled">
+              <InputLabel sx={{ color: "#ffffffcc" }}>To Asset</InputLabel>
+              <Select
+                value={toAsset}
+                onChange={handleToAssetChange}
+                sx={{
+                  color: "#fff",
+                  backgroundColor: "#000000",
+                  borderRadius: 1,
+                  "& .MuiSvgIcon-root": { color: "#fff" },
+                }}
+              >
+                <MenuItem value="DIAM">DIAM</MenuItem>
+                <MenuItem value="TradeToken">TradeToken</MenuItem>
+              </Select>
+            </FormControl>
+          </Box>
+
+          <TextField
+            label="Send Amount"
+            placeholder="Enter amount"
+            fullWidth
+            variant="filled"
+            value={sendAmount}
+            onChange={handleSendAmountChange}
+            sx={{
+              mb: 2,
+              input: { color: "#fff" },
+              label: { color: "#ffffffcc" },
+              backgroundColor: "#000000",
+              borderRadius: 1,
             }}
-          >
-            <option value="DIAM">DIAM</option>
-            <option value="TradeToken">TradeToken</option>
-          </select>
-        </Box>
-        <Box sx={{ mb: 2 }}>
-          <Typography variant="subtitle2">To Asset:</Typography>
-          <select
-            value={toAsset}
-            onChange={handleToAssetChange}
-            style={{
-              width: "100%",
-              padding: "8px",
-              borderRadius: "8px",
-              backgroundColor: "#000",
-              color: "#fff",
-              border: "1px solid #FFFFFF4D",
+          />
+
+          <TextField
+            label="Price (TradeToken per DIAM)"
+            placeholder="Enter price"
+            fullWidth
+            variant="filled"
+            value={price}
+            onChange={handlePriceChange}
+            sx={{
+              mb: 2,
+              input: { color: "#fff" },
+              label: { color: "#ffffffcc" },
+              backgroundColor: "#000000",
+              borderRadius: 1,
             }}
-          >
-            <option value="DIAM">DIAM</option>
-            <option value="TradeToken">TradeToken</option>
-          </select>
-        </Box>
-        <TextField
-          label="Send Amount"
-          placeholder="Enter amount"
-          fullWidth
-          variant="outlined"
-          value={sendAmount}
-          onChange={handleSendAmountChange}
-          sx={{
-            marginBottom: "1rem",
-            border: "1px solid #FFFFFF4D",
-            borderRadius: "8px",
-            input: { color: "#fff" },
-          }}
-        />
-        <TextField
-          label="Price (TradeToken per DIAM)"
-          placeholder="Enter price"
-          fullWidth
-          variant="outlined"
-          value={price}
-          onChange={handlePriceChange}
-          sx={{
-            marginBottom: "1rem",
-            border: "1px solid #FFFFFF4D",
-            borderRadius: "8px",
-            input: { color: "#fff" },
-          }}
-        />
-        <TextField
-          label="Estimated Received"
-          fullWidth
-          variant="outlined"
-          value={estimatedReceived}
-          InputProps={{
-            readOnly: true,
-            style: {
-              color: "#fff",
+          />
+
+          <TextField
+            label="Estimated Received"
+            fullWidth
+            variant="filled"
+            value={estimatedReceived}
+            InputProps={{ readOnly: true, style: { color: "#fff" } }}
+            InputLabelProps={{ style: { color: "#ffffffcc" } }}
+            sx={{
+              mb: 2,
               backgroundColor: "#333",
-              borderRadius: "8px",
-              border: "1px solid #FFFFFF4D",
-            },
-          }}
-          sx={{ marginBottom: "1rem" }}
-        />
-        <CustomButton
-          variant="contained"
-          fullWidth
-          onClick={handleStrictSendSwapClick}
-          disabled={loading || !walletPublicKey}
-          sx={{ mb: 2 }}
-        >
-          {loading ? <CircularProgress size={24} /> : "Swap (Strict Send)"}
-        </CustomButton>
-        <CustomButton
-          variant="contained"
-          fullWidth
-          onClick={handleStrictReceiveSwapClick}
-          disabled={loading || !walletPublicKey}
-          sx={{ mb: 2 }}
-        >
-          {loading ? <CircularProgress size={24} /> : "Swap (Strict Receive)"}
-        </CustomButton>
+              borderRadius: 1,
+            }}
+          />
+        </CardContent>
+
+        <CardActions sx={{ flexDirection: "column", gap: 2, mb: 2, px: 2 }}>
+          <CustomButton
+            variant="contained"
+            fullWidth
+            onClick={handleStrictSendSwapClick}
+            disabled={loading || !walletPublicKey}
+          >
+            {loading ? <CircularProgress size={24} /> : "Swap (Strict Send)"}
+          </CustomButton>
+
+          <CustomButton
+            variant="contained"
+            fullWidth
+            onClick={handleStrictReceiveSwapClick}
+            disabled={loading || !walletPublicKey}
+          >
+            {loading ? <CircularProgress size={24} /> : "Swap (Strict Receive)"}
+          </CustomButton>
+        </CardActions>
+
         {txStatus && (
-          <Typography variant="caption" sx={{ display: "block", textAlign: "center", mt: 2 }}>
+          <Typography
+            variant="caption"
+            sx={{ display: "block", textAlign: "center", mb: 2, color: "#fff" }}
+          >
             Transaction Status: {txStatus}
           </Typography>
         )}
-      </Box>
-
-      {/* Liquidity Pool Deposit Section */}
-      <Box
-        sx={{
-          backgroundColor: "rgba(0,206,229,0.06)",
-          margin: "2rem auto",
-          borderRadius: "16px",
-          border: "1px solid #FFFFFF4D",
-          padding: "2rem",
-          color: "#FFFFFF",
-          boxShadow: "0 4px 20px rgba(0,0,0,0.3)",
-          position: "relative",
-          marginBottom: "2rem",
-        }}
-      >
-        <Typography variant="h5" align="center" sx={{ mb: 4 }}>
-          Liquidity Deposit
-        </Typography>
-        <TextField
-          label="Liquidity Pool ID (hex)"
-          fullWidth
-          variant="outlined"
-          value={lpIdInput}
-          onChange={(e) => setLpIdInput(e.target.value)}
-          placeholder="Enter liquidity pool ID in hex"
-          sx={{ mb: 2, input: { color: "#fff" } }}
-        />
-        <TextField
-          label="DIAM (Native) Amount (Deposit)"
-          fullWidth
-          variant="outlined"
-          value={depositNative}
-          onChange={(e) => setDepositNative(e.target.value.replace(/[^0-9.]/g, ""))}
-          sx={{ mb: 2, input: { color: "#fff" } }}
-          placeholder="e.g. 5"
-        />
-        <TextField
-          label="TradeToken Amount (Deposit)"
-          fullWidth
-          variant="outlined"
-          value={depositCustom}
-          onChange={(e) => setDepositCustom(e.target.value.replace(/[^0-9.]/g, ""))}
-          sx={{ mb: 2, input: { color: "#fff" } }}
-          placeholder="e.g. 10"
-        />
-        <CustomButton
-          variant="contained"
-          fullWidth
-          onClick={handleLiquidityDepositClick}
-          disabled={lpLoading || !walletPublicKey}
-          sx={{ mb: 2 }}
-        >
-          {lpLoading ? <CircularProgress size={24} /> : "Deposit Liquidity"}
-        </CustomButton>
-        {lpTxStatus && (
-          <Typography variant="caption" sx={{ display: "block", textAlign: "center", mt: 2 }}>
-            Liquidity Deposit Status: {lpTxStatus}
-          </Typography>
-        )}
-      </Box>
-
-      {/* Liquidity Pool Withdraw Section */}
-      <Box
-        sx={{
-          backgroundColor: "rgba(0,206,229,0.06)",
-          margin: "2rem auto",
-          borderRadius: "16px",
-          border: "1px solid #FFFFFF4D",
-          padding: "2rem",
-          color: "#FFFFFF",
-          boxShadow: "0 4px 20px rgba(0,0,0,0.3)",
-          position: "relative",
-          marginBottom: "2rem",
-        }}
-      >
-        <Typography variant="h5" align="center" sx={{ mb: 4 }}>
-          Liquidity Withdraw
-        </Typography>
-        <TextField
-          label="Liquidity Pool ID (hex)"
-          fullWidth
-          variant="outlined"
-          value={lpIdInput}
-          onChange={(e) => setLpIdInput(e.target.value)}
-          placeholder="Enter liquidity pool ID in hex"
-          sx={{ mb: 2, input: { color: "#fff" } }}
-        />
-        <TextField
-          label="Pool Shares to Burn"
-          fullWidth
-          variant="outlined"
-          value={burnShares}
-          onChange={(e) => setBurnShares(e.target.value.replace(/[^0-9.]/g, ""))}
-          sx={{ mb: 2, input: { color: "#fff" } }}
-          placeholder="e.g. 5"
-        />
-        <TextField
-          label="Minimum TradeToken to Receive"
-          fullWidth
-          variant="outlined"
-          value={minCustom}
-          onChange={(e) => setMinCustom(e.target.value.replace(/[^0-9.]/g, ""))}
-          sx={{ mb: 2, input: { color: "#fff" } }}
-          placeholder="e.g. 1"
-        />
-        <TextField
-          label="Minimum DIAM (Native) to Receive"
-          fullWidth
-          variant="outlined"
-          value={minNative}
-          onChange={(e) => setMinNative(e.target.value.replace(/[^0-9.]/g, ""))}
-          sx={{ mb: 2, input: { color: "#fff" } }}
-          placeholder="e.g. 0.5"
-        />
-        <CustomButton
-          variant="contained"
-          fullWidth
-          onClick={handleLiquidityWithdrawClick}
-          disabled={lpLoading || !walletPublicKey}
-          sx={{ mb: 2 }}
-        >
-          {lpLoading ? <CircularProgress size={24} /> : "Withdraw Liquidity"}
-        </CustomButton>
-        {lpTxStatus && (
-          <Typography variant="caption" sx={{ display: "block", textAlign: "center", mt: 2 }}>
-            Liquidity Withdraw Status: {lpTxStatus}
-          </Typography>
-        )}
-      </Box>
+      </Card>
 
       <TransactionModal
         open={modalOpen}

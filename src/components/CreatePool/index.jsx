@@ -28,47 +28,25 @@ const CreatePoolPage = () => {
   const [logs, setLogs] = useState([]);
   const [poolDetails, setPoolDetails] = useState(null);
   const [modalOpen, setModalOpen] = useState(false);
-  const [transactionStatus, setTransactionStatus] = useState(""); // "pending", "success", "error"
+  const [transactionStatus, setTransactionStatus] = useState(""); 
   const [transactionMessage, setTransactionMessage] = useState("");
   const [transactionHash, setTransactionHash] = useState("");
 
-  // Get connected wallet public key from localStorage
   const walletPublicKey = localStorage.getItem("diamPublicKey") || "";
   if (!walletPublicKey)
     console.warn("No wallet public key found in localStorage.");
 
-  // Diamnet SDK, server, and ephemeral issuer for our custom asset
   const [sdk, setSdk] = useState(null);
   const [server, setServer] = useState(null);
   const [issuerKeypair, setIssuerKeypair] = useState(null);
 
-  // Helper: add a log message to the UI and console
   const addLog = (msg) => {
     console.log(msg);
     setLogs((prev) => [...prev, msg]);
   };
 
-  // Helper: establish trustline for a given asset and keypair (for signing, we require the keypair)
-  const establishTrustline = async (kp, asset) => {
-    try {
-      const acct = await server.loadAccount(kp.publicKey());
-      const tx = new sdk.TransactionBuilder(acct, {
-        fee: sdk.BASE_FEE,
-        networkPassphrase: NETWORK_PASSPHRASE,
-      })
-        .addOperation(sdk.Operation.changeTrust({ asset }))
-        .setTimeout(30)
-        .build();
-      tx.sign(kp);
-      const response = await server.submitTransaction(tx);
-      addLog(`Trustline established for ${kp.publicKey()}: ${response.hash}`);
-    } catch (error) {
-      addLog("Error establishing trustline for " + kp.publicKey() + ": " + error.toString());
-      throw error;
-    }
-  };
 
-  // Load Diamnet SDK, create server and ephemeral issuer
+
   useEffect(() => {
     (async () => {
       try {
@@ -105,7 +83,6 @@ const CreatePoolPage = () => {
     }
   }, [sdk, issuerKeypair]);
 
-  // Helper: parse token input (native or "CODE:ISSUER")
   const parseTokenInput = (input) => {
     const val = input.trim().toLowerCase();
     if (val === "native" || val === "xlm") return sdk.Asset.native();
@@ -173,7 +150,6 @@ const CreatePoolPage = () => {
       await friendbotFund(walletPublicKey);
       addLog("Fund: Completed friendbot funding for connected wallet.");
 
-      // Parse tokens: Token A from UI; Token B is our custom asset
       addLog("Parsing Token A from input: " + tokenA);
       const assetA = parseTokenInput(tokenA);
       addLog(
@@ -193,7 +169,6 @@ const CreatePoolPage = () => {
           assetB.getIssuer()
       );
 
-      // Ensure asset types are assigned
       if (typeof assetA.getAssetType === "function" && !assetA.type) {
         assetA.type = assetA.getAssetType();
         addLog("Asset A type assigned: " + assetA.type);
@@ -459,7 +434,6 @@ const CreatePoolPage = () => {
         onClose={() => setModalOpen(false)}
         status={transactionStatus}
         message={transactionMessage}
-        transactionHash={transactionHash}
       />
     </Container>
   );

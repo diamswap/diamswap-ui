@@ -68,19 +68,15 @@ const Navbar = () => {
   const menuConfig = {
     trade: [
       { label: "Swap", path: "/swap", icon: <FaExchangeAlt /> },
-      { label: "Limit", path: "/limit", icon: <FaChartBar /> },
       { label: "Send", path: "/send", icon: <FaPaperPlane /> },
       { label: "Buy", path: "/buy", icon: <FaWallet /> },
     ],
     explore: [
-      { label: "Tokens", path: "/explore/tokens" },
       { label: "Pools", path: "/explore/pools" },
       { label: "Transactions", path: "/explore/transactions" },
     ],
     pools: [
       { label: "Create Pool", path: "/pools/create" },
-      { label: "Create Position", path: "/pools/positions/create" },
-      { label: "View Positions", path: "/position/view" },
       { label: "View Pool", path: "/pools/view" },
     ],
   };
@@ -272,7 +268,7 @@ const Navbar = () => {
               display: { xs: "none", md: "flex" },
             }}
           >
-            {["trade", "explore", "pools"].map((menu) => (
+            {["trade",  "pools"].map((menu) => (
               <Box
                 key={menu}
                 onMouseEnter={() => handleMouseEnter(menu)}
