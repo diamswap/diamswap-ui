@@ -1,15 +1,14 @@
-import { defineConfig } from 'vite'
-import react from '@vitejs/plugin-react'
-import rollupNodePolyFill from 'rollup-plugin-polyfill-node'
+import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
 
 export default defineConfig({
-  plugins: [
-    react(),
-    rollupNodePolyFill(),
-  ],
-  resolve: {
-    alias: {
-      process: 'rollup-plugin-polyfill-node/process-es6',
+  plugins: [react()],
+  optimizeDeps: {
+    include: ['@emotion/react', '@emotion/styled'],
+  },
+  build: {
+    commonjsOptions: {
+      include: [/node_modules/],
     },
   },
-})
+});
