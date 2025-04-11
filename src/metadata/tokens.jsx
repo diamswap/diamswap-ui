@@ -4,15 +4,15 @@
 export const metadata = {
   tokens: [
     {
-      symbol: "USDT",
+      symbol: "DIAM",
       name: "Tether",
-      balance: "1000",
-      icon: "https://cryptologos.cc/logos/tether-usdt-logo.png?v=023", // Public URL for USDT icon
+      balance: "0",
+      icon: "https://cryptologos.cc/logos/tether-usdt-logo.png?v=023", 
     },
     {
-      symbol: "DAI",
+      symbol: "TRADE",
       name: "Dai",
-      balance: "500",
+      balance: "0",
       icon: "https://cryptologos.cc/logos/multi-collateral-dai-dai-logo.png?v=023", // Public URL for DAI icon
     },
   ],

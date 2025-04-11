@@ -1,4 +1,4 @@
-import React from 'react';
+import React from "react";
 
 import { useState, useEffect } from "react";
 import {
@@ -21,8 +21,6 @@ import { metadata } from "../../metadata/tokens";
 import TokenSelectorModal from "../../comman/TokenSelector";
 import CustomButton from "../../comman/CustomButton";
 import { useNavigate } from "react-router-dom";
-
-
 
 const IconButton = styled("button")({
   background: "none",
@@ -82,8 +80,6 @@ const SwapInput = styled(TextField)({
   },
 });
 
-
-
 export default function Home() {
   const [isTokenModalOpen, setTokenModalOpen] = useState(false);
   const [selectedPayToken, setSelectedPayToken] = useState(metadata.tokens[0]); // Default to the first token
@@ -98,7 +94,6 @@ export default function Home() {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down("sm"));
   const navigate = useNavigate();
-
 
   const handleTokenSelect = (token) => {
     if (activeInput === "pay") {
@@ -142,9 +137,6 @@ export default function Home() {
     ).toFixed(4)} ${selectedReceiveToken.symbol}`;
   };
 
-
-
-
   return (
     <Box
       data-aos="fade-up"
@@ -157,11 +149,20 @@ export default function Home() {
         position: "relative",
         overflow: "hidden",
         padding: isMobile && "1rem",
-      }}>
-      <Typography data-aos="fade-up" variant="h2" sx={{
-        color: "white", textAlign: "center", fontSize: "2.5rem", background: "linear-gradient(to right, #0cb8bf, #ffffff, #0cb8bf)", WebkitBackgroundClip: "text",
-        WebkitTextFillColor: "transparent",
-      }}>
+      }}
+    >
+      <Typography
+        data-aos="fade-up"
+        variant="h2"
+        sx={{
+          color: "white",
+          textAlign: "center",
+          fontSize: "2.5rem",
+          background: "linear-gradient(to right, #0cb8bf, #ffffff, #0cb8bf)",
+          WebkitBackgroundClip: "text",
+          WebkitTextFillColor: "transparent",
+        }}
+      >
         Swap anytime, anywhere.
       </Typography>
       <Box
@@ -179,7 +180,6 @@ export default function Home() {
         }}
       >
         <Stack spacing={3}>
-
           <Box sx={{ position: "relative" }}>
             {/* Pay Section */}
             <Typography sx={{ color: "gray", textAlign: "left" }}>
@@ -265,10 +265,9 @@ export default function Home() {
             {getExchangeRate()}
           </Typography>
 
-          <CustomButton
-            onClick={() => navigate("/swap")}
-
-          >Get Started</CustomButton>
+          <CustomButton onClick={() => navigate("/swap")}>
+            Get Started
+          </CustomButton>
         </Stack>
 
         <TokenSelectorModal
@@ -279,5 +278,5 @@ export default function Home() {
         />
       </Box>
     </Box>
-  )
+  );
 }

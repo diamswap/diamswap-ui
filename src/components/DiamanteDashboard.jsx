@@ -7,30 +7,23 @@ import {
   CircularProgress,
   Divider,
   List,
-  ListItem,
-  ListItemText,
+  Card,
+  CardContent,
   Tabs,
   Tab,
   Avatar,
-  Card,
-  CardContent,
   Grid,
   Collapse,
   IconButton,
+  TableCell,
+  TableRow,
+  Table,
+  TableHead,
+  TableBody,
 } from "@mui/material";
 import { Aurora } from "diamnet-sdk";
 import { FiChevronDown, FiChevronUp } from "react-icons/fi";
 
-// A simple helper to reuse the gradient style in multiple places:
-const gradientText = {
-  backgroundImage:
-    "linear-gradient(270deg, rgb(15, 186, 209) 0%, rgb(255, 255, 255) 48.7783%, rgb(15, 186, 209) 100%)",
-  backgroundClip: "text",
-  WebkitBackgroundClip: "text",
-  WebkitTextFillColor: "transparent",
-};
-
-// Simple TabPanel component
 function TabPanel({ children, value, index, ...other }) {
   return (
     <div
@@ -45,8 +38,15 @@ function TabPanel({ children, value, index, ...other }) {
   );
 }
 
-const DiamanteDashboard = ({
-}) => {
+const gradientText = {
+  backgroundImage:
+    "linear-gradient(270deg, rgb(15, 186, 209) 0%, rgb(255, 255, 255) 48.7783%, rgb(15, 186, 209) 100%)",
+  backgroundClip: "text",
+  WebkitBackgroundClip: "text",
+  WebkitTextFillColor: "transparent",
+};
+
+export default function DiamanteDashboard() {
   const accountId = localStorage.getItem("diamPublicKey");
   const [loading, setLoading] = useState(true);
   const [accountData, setAccountData] = useState(null);
@@ -56,35 +56,44 @@ const DiamanteDashboard = ({
   const [selectedTab, setSelectedTab] = useState(0);
   const [showFullAccountData, setShowFullAccountData] = useState(false);
 
-  // Memoize the server instance so it is not re-created on each render.
+  // NEW: We'll store all "ops per transaction" in a dictionary, keyed by tx.id
+  const [txOps, setTxOps] = useState({});
+
   const server = useMemo(
     () => new Aurora.Server("https://diamtestnet.diamcircle.io/"),
     []
   );
 
+  // Helper function to truncate a hash string: first 4 and last 4 characters.
+  const truncateHash = (hash) => {
+    if (!hash || hash.length < 8) return hash;
+    return `${hash.substring(0, 10)}...${hash.substring(hash.length - 8)}`;
+  };
+
   useEffect(() => {
     const fetchData = async () => {
       try {
         setLoading(true);
-        // Fetch account information
+
+        // 1. Account Info
         const account = await server.accounts().accountId(accountId).call();
         setAccountData(account);
 
-        // Fetch claimable balances
+        // 2. Claimable Balances
         const cbResponse = await server
           .claimableBalances()
           .claimant(accountId)
           .call();
         setClaimableBalances(cbResponse.records);
 
-        // Fetch transactions
+        // 3. Transactions
         const txResponse = await server
           .transactions()
           .forAccount(accountId)
           .call();
         setTransactions(txResponse.records);
 
-        // Fetch operations
+        // 4. Operations
         const opResponse = await server
           .operations()
           .forAccount(accountId)
@@ -102,6 +111,26 @@ const DiamanteDashboard = ({
     }
   }, [accountId, server]);
 
+  // ❗️ NEW: When transactions change, fetch operations for each transaction so we can see "Type/To/Amount"
+  useEffect(() => {
+    async function loadTxOps() {
+      if (!transactions || transactions.length === 0) return;
+      for (const tx of transactions) {
+        try {
+          // For each transaction, fetch its operations
+          const opsResp = await server
+            .operations()
+            .forTransaction(tx.hash)
+            .call();
+          setTxOps((prev) => ({ ...prev, [tx.id]: opsResp.records }));
+        } catch (error) {
+          console.error("Error fetching ops for tx:", tx.hash, error);
+        }
+      }
+    }
+    loadTxOps();
+  }, [transactions, server]);
+
   const handleTabChange = (event, newValue) => {
     setSelectedTab(newValue);
   };
@@ -110,7 +139,6 @@ const DiamanteDashboard = ({
     setShowFullAccountData(!showFullAccountData);
   };
 
-  // Helper functions
   const getNativeBalance = () => {
     if (accountData && accountData.balances) {
       const native = accountData.balances.find(
@@ -130,7 +158,6 @@ const DiamanteDashboard = ({
       <Box sx={{ display: "flex", justifyContent: "center", mt: 4 }}>
         <CircularProgress
           sx={{
-            // Use a single color for the spinner or keep the default
             color: "rgba(15, 186, 209, 0.7)",
           }}
         />
@@ -140,7 +167,6 @@ const DiamanteDashboard = ({
 
   return (
     <Container maxWidth="lg" sx={{ mt: 4, pb: 4 }}>
-      {/* Main Paper Container */}
       <Paper
         elevation={4}
         sx={{
@@ -163,7 +189,7 @@ const DiamanteDashboard = ({
             <Grid container spacing={2} alignItems="center">
               <Grid item>
                 <Avatar sx={{ width: 64, height: 64, bgcolor: "#333" }}>
-                  {accountId.charAt(0)}
+                  {accountId?.charAt(0) || "?"}
                 </Avatar>
               </Grid>
               <Grid item xs>
@@ -179,7 +205,6 @@ const DiamanteDashboard = ({
                 <Typography variant="body2">
                   <strong>Sequence:</strong> {getAccountSequence()}
                 </Typography>
-                {/* Explorer Link with gradient text */}
                 <Typography
                   component="a"
                   href={`https://testnetexplorer.diamante.io/about-account/${accountId}`}
@@ -204,6 +229,7 @@ const DiamanteDashboard = ({
                 </IconButton>
               </Grid>
             </Grid>
+
             <Collapse in={showFullAccountData} timeout="auto" unmountOnExit>
               <Box
                 sx={{
@@ -282,7 +308,9 @@ const DiamanteDashboard = ({
             Claimable Balances
           </Typography>
           {claimableBalances.length > 0 ? (
-            <List sx={{ mt: 1 }}>
+            <Box
+              sx={{ mt: 1, display: "flex", flexDirection: "column", gap: 2 }}
+            >
               {claimableBalances.map((balance) => (
                 <Card
                   key={balance.id}
@@ -303,50 +331,142 @@ const DiamanteDashboard = ({
                   </CardContent>
                 </Card>
               ))}
-            </List>
+            </Box>
           ) : (
             <Typography>No claimable balances found.</Typography>
           )}
         </TabPanel>
 
+        {/* TRANSACTIONS TAB UPDATED */}
         <TabPanel value={selectedTab} index={2}>
           <Typography variant="h6" gutterBottom>
             Transactions
           </Typography>
-          {transactions.length > 0 ? (
-            <List sx={{ mt: 1 }}>
-              {transactions.map((tx) => (
-                <Card
-                  key={tx.id}
-                  sx={{
-                    backgroundColor: "transparent",
-                    borderRadius: 2,
-                    border: "1px solid #333",
-                  }}
-                >
-                  <CardContent>
-                    <Typography variant="body1" sx={{ fontWeight: 600 }}>
-                      Tx Hash:{" "}
-                      <Typography
-                        component="a"
-                        href={`https://testnetexplorer.diamante.io/transactions/${tx.hash}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        sx={{
-                          ...gradientText,
-                          textDecoration: "underline",
-                        }}
-                      >
-                        {tx.hash}
-                      </Typography>
-                    </Typography>
-                  </CardContent>
-                </Card>
-              ))}
-            </List>
-          ) : (
-            <Typography>No transactions found.</Typography>
-          )}
+
+          <TabPanel value={selectedTab} index={2}>
+            {transactions.length === 0 ? (
+              <Typography>No transactions found.</Typography>
+            ) : (
+              // Create a table with columns: From, Hash, Type, To, Amount
+              <Table sx={{ mt: 1, border: "1px solid #333" }}>
+                <TableHead>
+                  <TableRow>
+                    <TableCell sx={{ color: "#fff" }}>From</TableCell>
+                    <TableCell sx={{ color: "#fff" }}>Hash</TableCell>
+                    <TableCell sx={{ color: "#fff" }}>Type</TableCell>
+                    <TableCell sx={{ color: "#fff" }}>To</TableCell>
+                    <TableCell sx={{ color: "#fff" }}>Amount</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {transactions.map((tx) => {
+                    const opsForThisTx = txOps[tx.id] || [];
+
+                    // If no operations, show a single row.
+                    if (opsForThisTx.length === 0) {
+                      return (
+                        <TableRow key={tx.id}>
+                          {/* FROM */}
+                          <TableCell sx={{ color: "#fff" }}>
+                            {tx.source_account}
+                          </TableCell>
+
+                          {/* HASH */}
+                          <TableCell sx={{ color: "#fff" }}>
+                            <Typography
+                              component="a"
+                              href={`https://testnetexplorer.diamante.io/transactions/${tx.hash}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              sx={{
+                                ...gradientText,
+                                textDecoration: "underline",
+                              }}
+                            >
+                              {truncateHash(tx.hash)}
+                            </Typography>
+                          </TableCell>
+
+                          {/* TYPE / TO / AMOUNT */}
+                          <TableCell sx={{ color: "#fff" }} colSpan={3}>
+                            No operations found
+                          </TableCell>
+                        </TableRow>
+                      );
+                    }
+
+                    // Otherwise, create one table row per operation in this transaction.
+                    return opsForThisTx.map((op) => {
+                      const { type, id: opId } = op;
+                      let from = tx.source_account;
+                      let to = "";
+                      let amount = "";
+
+                      switch (op.type) {
+                        case "create_account":
+                          to = op.account;
+                          amount = op.starting_balance;
+                          break;
+                        case "payment":
+                          to = op.to;
+                          amount = op.amount;
+                          break;
+                        case "manage_sell_offer":
+                          to = "Orderbook";
+                          amount = op.amount || "N/A";
+                          break;
+                        case "change_trust":
+                          to = "-";
+                          amount = "N/A";
+                          break;
+                        default:
+                          to = "-";
+                          amount = "N/A";
+                          break;
+                      }
+
+                      return (
+                        <TableRow key={opId}>
+                          {/* FROM */}
+                          <TableCell sx={{ color: "#fff" }}>
+                            {" "}
+                            {truncateHash(from)}
+                          </TableCell>
+
+                          {/* HASH */}
+                          <TableCell sx={{ color: "#fff" }}>
+                            <Typography
+                              component="a"
+                              href={`https://testnetexplorer.diamante.io/transactions/${tx.hash}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              sx={{
+                                ...gradientText,
+                                textDecoration: "underline",
+                              }}
+                            >
+                              {truncateHash(tx.hash)}
+                            </Typography>
+                          </TableCell>
+
+                          {/* TYPE */}
+                          <TableCell sx={{ color: "#fff" }}>{type}</TableCell>
+
+                          {/* TO */}
+                          <TableCell sx={{ color: "#fff" }}>
+                            {truncateHash(to)}
+                          </TableCell>
+
+                          {/* AMOUNT */}
+                          <TableCell sx={{ color: "#fff" }}>{amount}</TableCell>
+                        </TableRow>
+                      );
+                    });
+                  })}
+                </TableBody>
+              </Table>
+            )}
+          </TabPanel>
         </TabPanel>
 
         <TabPanel value={selectedTab} index={3}>
@@ -354,7 +474,9 @@ const DiamanteDashboard = ({
             Operations
           </Typography>
           {operations.length > 0 ? (
-            <List sx={{ mt: 1 }}>
+            <Box
+              sx={{ mt: 1, display: "flex", flexDirection: "column", gap: 2 }}
+            >
               {operations.map((op) => (
                 <Card
                   key={op.id}
@@ -362,7 +484,6 @@ const DiamanteDashboard = ({
                     backgroundColor: "transparent",
                     borderRadius: 2,
                     border: "1px solid #333",
-                    mb: 2,
                   }}
                 >
                   <CardContent>
@@ -375,7 +496,7 @@ const DiamanteDashboard = ({
                   </CardContent>
                 </Card>
               ))}
-            </List>
+            </Box>
           ) : (
             <Typography>No operations found.</Typography>
           )}
@@ -383,6 +504,4 @@ const DiamanteDashboard = ({
       </Paper>
     </Container>
   );
-};
-
-export default DiamanteDashboard;
+}

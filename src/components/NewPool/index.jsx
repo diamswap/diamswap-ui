@@ -35,16 +35,12 @@ const NETWORK_PASSPHRASE = "Diamante Testnet 2024";
 const friendbotUrl = "https://friendbot.diamcircle.io?addr=";
 const server = new Aurora.Server("https://diamtestnet.diamcircle.io/");
 
-// Use the provided TradeToken issuer address
 const customAsset = new Asset(
   "TradeToken",
   "GA4YYAEUKT2C323PT35G363ABZH5WPG3O2N24XTHLKSGMHOBMN2SNQHQ"
 );
 
-// For demo, generate an ephemeral keypair for the distributor account
 const distributorKeypair = Keypair.random();
-
-// Create a LiquidityPoolAsset from DIAM (native) and our custom asset.
 const lpAsset = new LiquidityPoolAsset(Asset.native(), customAsset, 30);
 
 // Helper for logging messages
@@ -95,9 +91,7 @@ const createTrustlineForConnectedWallet = async (asset) => {
 };
 
 const LiquidityPage = () => {
-  // --------------------------
-  // State variables
-  // --------------------------
+
   const [logs, setLogs] = useState([]);
   const [lpIdInput, setLpIdInput] = useState("");
   const [depositCustom, setDepositCustom] = useState("");
@@ -140,46 +134,8 @@ const LiquidityPage = () => {
     }
   };
 
-  // Generic function to establish a trustline
-  const establishTrustline = async (keypair, asset) => {
-    try {
-      const account = await server.loadAccount(keypair.publicKey());
-      const tx = new TransactionBuilder(account, {
-        fee: BASE_FEE,
-        networkPassphrase: NETWORK_PASSPHRASE,
-      })
-        .addOperation(
-          Operation.changeTrust({
-            asset,
-            limit: "1000000",
-          })
-        )
-        .setTimeout(100)
-        .build();
-      tx.sign(keypair);
-      const response = await server.submitTransaction(tx);
-      setLogs((prev) =>
-        logMessage(
-          prev,
-          `✅ Trustline established for ${keypair.publicKey()} (Asset: ${asset.getCode()}) | Tx: ${response.hash}`
-        )
-      );
-    } catch (error) {
-      setLogs((prev) =>
-        logMessage(
-          prev,
-          `❌ Trustline error for ${keypair.publicKey()}: ${
-            error?.response?.data || error
-          }`
-        )
-      );
-      throw error;
-    }
-  };
 
-  const establishCustomAssetTrustline = async (keypair) => {
-    await establishTrustline(keypair, customAsset);
-  };
+ 
 
   const handleDepositClick = async () => {
     setLoading(true);
@@ -386,43 +342,7 @@ const LiquidityPage = () => {
   // --------------------------
   return (
     <Container maxWidth="sm" sx={{ marginTop: "40px" }}>
-      {/* Wallet Connection */}
-      <Box sx={{ textAlign: "center", mb: 3 }}>
-        {!localStorage.getItem("diamPublicKey") ? (
-          <Button
-            variant="contained"
-            onClick={() => {
-              if (!window.diam || typeof window.diam.connect !== "function") {
-                alert("DIAM Wallet extension not installed.");
-                return;
-              }
-              window.diam
-                .connect()
-                .then((res) => {
-                  const pk = res?.message?.data?.[0]?.diamPublicKey;
-                  if (pk) {
-                    localStorage.setItem("diamPublicKey", pk);
-                    setTxStatus(`Connected: ${pk.slice(0, 6)}...${pk.slice(-6)}`);
-                  } else {
-                    alert("Could not retrieve DIAM public key from extension.");
-                  }
-                })
-                .catch((err) => {
-                  alert("Error connecting DIAM wallet: " + err);
-                });
-            }}
-          >
-            Connect DIAM Wallet
-          </Button>
-        ) : (
-          <Typography variant="body2" sx={{ color: "lightgreen" }}>
-            Connected:{" "}
-            {localStorage.getItem("diamPublicKey").slice(0, 6)}...
-            {localStorage.getItem("diamPublicKey").slice(-6)}
-          </Typography>
-        )}
-      </Box>
-
+   
       <Typography variant="h4" align="center" sx={{ mb: 4 }}>
         Liquidity Pool
       </Typography>

@@ -1,3 +1,4 @@
+// src/components/Navbar.jsx
 import React, { useState } from "react";
 import {
   AppBar,
@@ -16,15 +17,7 @@ import {
   Typography,
 } from "@mui/material";
 import { NavLink, useNavigate } from "react-router-dom";
-
-import { FaBars } from "react-icons/fa";
-import {
-  FaExchangeAlt,
-  FaChartBar,
-  FaPaperPlane,
-  FaWallet,
-} from "react-icons/fa";
-import SearchFeature from "../SearchToken";
+import { FaBars, FaExchangeAlt, FaPaperPlane, FaWallet } from "react-icons/fa";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import DiamWalletConnect from "./DiamWallet";
 
@@ -36,10 +29,13 @@ const Navbar = () => {
   const navigate = useNavigate();
   const [menuHover, setMenuHover] = useState({
     trade: false,
-    explore: false,
     pools: false,
   });
+  
+  // Get wallet public key from localStorage (wallet is connected if a key exists)
+  const walletPublicKey = localStorage.getItem("diamPublicKey");
 
+  // Handlers for drawer toggle.
   const toggleDrawer = (open) => (event) => {
     if (
       event.type === "keydown" &&
@@ -50,6 +46,7 @@ const Navbar = () => {
     setIsDrawerOpen(open);
   };
 
+  // Handlers for dropdown menu hover events.
   const handleMouseEnter = (menu) => {
     setMenuHover((prev) => ({ ...prev, [menu]: true }));
   };
@@ -58,6 +55,7 @@ const Navbar = () => {
     setMenuHover((prev) => ({ ...prev, [menu]: false }));
   };
 
+  // Toggle sub-menu open/close (for mobile drawer)
   const handleSubMenuToggle = (menuKey) => {
     setOpenSubMenu((prev) => ({
       ...prev,
@@ -71,22 +69,15 @@ const Navbar = () => {
       { label: "Send", path: "/send", icon: <FaPaperPlane /> },
       { label: "Buy", path: "/buy", icon: <FaWallet /> },
     ],
-    explore: [
-      { label: "Pools", path: "/explore/pools" },
-      { label: "Transactions", path: "/explore/transactions" },
-    ],
     pools: [
       { label: "Create Pool", path: "/pools/create" },
       { label: "View Pool", path: "/pools/view" },
     ],
   };
 
+  // For mobile drawer menu
   const drawerList = (
-    <Box
-      sx={{ width: 250 }}
-      role="presentation"
-      onKeyDown={toggleDrawer(false)}
-    >
+    <Box sx={{ width: 250 }} role="presentation" onKeyDown={toggleDrawer(false)}>
       <List>
         {/* Trade Menu */}
         <ListItem button onClick={() => handleSubMenuToggle("trade")}>
@@ -109,35 +100,6 @@ const Navbar = () => {
                 onClick={() => {
                   setIsDrawerOpen(false);
                   handleSubMenuToggle("trade");
-                }}
-              >
-                <ListItemText primary={item.label} />
-              </ListItem>
-            ))}
-          </List>
-        </Collapse>
-
-        {/* Explore Menu */}
-        <ListItem button onClick={() => handleSubMenuToggle("explore")}>
-          <ListItemText primary="Explore" />
-          {openSubMenu.explore ? (
-            <ChevronDown size={16} color="#fefbfb" />
-          ) : (
-            <ChevronRight size={16} color="#fefbfb" />
-          )}
-        </ListItem>
-        <Collapse in={openSubMenu.explore} timeout="auto" unmountOnExit>
-          <List component="div" disablePadding>
-            {menuConfig.explore.map((item) => (
-              <ListItem
-                button
-                key={item.label}
-                component={NavLink}
-                to={item.path}
-                sx={{ pl: 4 }}
-                onClick={() => {
-                  setIsDrawerOpen(false);
-                  handleSubMenuToggle("explore");
                 }}
               >
                 <ListItemText primary={item.label} />
@@ -179,10 +141,17 @@ const Navbar = () => {
         <ListItem button component={NavLink} to="/staking">
           <ListItemText primary="Staking" />
         </ListItem>
+        {/* Profile: Render in drawer only if wallet is connected */}
+        {walletPublicKey && (
+          <ListItem button component={NavLink} to="/profile">
+            <ListItemText primary="Profile" />
+          </ListItem>
+        )}
       </List>
     </Box>
   );
 
+  // Render dropdown for desktop view menu (when hovering)
   const renderMenuItems = (menu) => {
     return menuConfig[menu].map((item) => (
       <MenuItem
@@ -240,20 +209,13 @@ const Navbar = () => {
         width: "100%",
       }}
     >
-      <Toolbar
-        sx={{
-          justifyContent: "space-between",
-          alignItems: "center",
-        }}
-      >
-        <Box display={"flex"} gap={1}>
+      <Toolbar sx={{ justifyContent: "space-between", alignItems: "center" }}>
+        {/* Left side: Logo and primary menus */}
+        <Box display="flex" gap={1}>
           <Button
             component={NavLink}
             to="/"
-            sx={{
-              color: "#fff",
-              textTransform: "none",
-            }}
+            sx={{ color: "#fff", textTransform: "none" }}
           >
             <img
               src="https://framerusercontent.com/images/hCJipfYt6QNf2M7IkkKiSiZ5t0.png?scale-down-to=512"
@@ -263,12 +225,9 @@ const Navbar = () => {
             Diamante
           </Button>
 
-          <Box
-            sx={{
-              display: { xs: "none", md: "flex" },
-            }}
-          >
-            {["trade",  "pools"].map((menu) => (
+          {/* Desktop menus */}
+          <Box sx={{ display: { xs: "none", md: "flex" } }}>
+            {["trade", "pools"].map((menu) => (
               <Box
                 key={menu}
                 onMouseEnter={() => handleMouseEnter(menu)}
@@ -276,19 +235,16 @@ const Navbar = () => {
                 sx={{ position: "relative" }}
               >
                 <Button
-                  sx={{
-                    color: "#fff",
-                    textTransform: "none",
-                  }}
+                  sx={{ color: "#fff", textTransform: "none" }}
+                  // For "trade", navigate to "/swap". For "pools", default open "/pools/create".
                   component={NavLink}
-                  to={menu === "trade" ? "/swap" : `/${menu}`}
+                  to={menu === "trade" ? "/swap" : "/pools/create"}
                 >
                   {menu.charAt(0).toUpperCase() + menu.slice(1)}
                 </Button>
                 {renderDropdown(menu)}
               </Box>
             ))}
-
             <Button
               component={NavLink}
               to="/staking"
@@ -298,43 +254,27 @@ const Navbar = () => {
             </Button>
           </Box>
         </Box>
-        {!isMobile && (
-          <Box ml={-10}>
-            <SearchFeature />
-          </Box>
-        )}
 
-        <Box
-          display={"flex"}
-          gap={3}
-          alignItems={"center"}
-          justifyContent={"center"}
-        >
+        {/* Right side: Wallet connect, Profile (only if wallet is connected), Menu icon for mobile */}
+        <Box display="flex" gap={3} alignItems="center">
           <DiamWalletConnect />
-          <Button
+          {walletPublicKey && (
+            <Button
               component={NavLink}
               to="/profile"
               sx={{ color: "#fff", textTransform: "none" }}
             >
-            Profile
+              Profile
             </Button>
+          )}
           <Box sx={{ display: { xs: "flex", md: "none" } }}>
-            <IconButton
-              edge="start"
-              color="inherit"
-              aria-label="menu"
-              onClick={toggleDrawer(true)}
-            >
+            <IconButton edge="start" color="inherit" onClick={toggleDrawer(true)}>
               <FaBars style={{ color: "#D5FAFE" }} />
             </IconButton>
           </Box>
         </Box>
 
-        <Drawer
-          anchor="right"
-          open={isDrawerOpen}
-          onClose={toggleDrawer(false)}
-        >
+        <Drawer anchor="right" open={isDrawerOpen} onClose={toggleDrawer(false)}>
           {drawerList}
         </Drawer>
       </Toolbar>

@@ -3,10 +3,8 @@ import { Box, Button, useMediaQuery } from "@mui/material";
 import { useTheme } from "@emotion/react";
 import { useLocation, useNavigate } from "react-router-dom";
 import SwapInterface from "./Swap";
-import LimitPage from "./Limit";
-import SendPage from "./Send";
-import BuyPage from "./Buy";
-import Liquidity from "./Liquidity";
+import SellOfferPage from "./SellOfferPage";
+import BuyOfferPage from "./BuyOfferPage";
 
 const TabNavigation = ({ activeTab, setActiveTab }) => {
   const location = useLocation();
@@ -20,9 +18,7 @@ const TabNavigation = ({ activeTab, setActiveTab }) => {
       case "/swap":
         setActiveTab("Swap");
         break;
-      case "/limit":
-        setActiveTab("Limit");
-        break;
+    
       case "/send":
         setActiveTab("Send");
         break;
@@ -39,12 +35,11 @@ const TabNavigation = ({ activeTab, setActiveTab }) => {
     switch (activeTab) {
       case "Swap":
         return <SwapInterface />;
-      case "Limit":
-        return <LimitPage />;
+ 
       case "Send":
-        return <SendPage />;
+        return <SellOfferPage />;
       case "Buy":
-        return <BuyPage />;
+        return <BuyOfferPage />;
       default:
         return <SwapInterface />;
     }
@@ -62,7 +57,7 @@ const TabNavigation = ({ activeTab, setActiveTab }) => {
           mt: 2,
         }}
       >
-        {["Swap", "Limit", "Send", "Buy"].map((tab) => (
+        {["Swap",  "Send", "Buy"].map((tab) => (
           <Button
             key={tab}
             onClick={() => navigate(`/${tab.toLowerCase()}`)}
@@ -80,9 +75,7 @@ const TabNavigation = ({ activeTab, setActiveTab }) => {
         ))}
       </Box>
 
-      {/* Render Active Component */}
       {renderContent()}
-      <Liquidity />
     </Box>
   );
 };
