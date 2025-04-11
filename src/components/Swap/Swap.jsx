@@ -32,12 +32,11 @@ import { PinataSDK } from "pinata-web3";
 if (!window.Buffer) {
   window.Buffer = Buffer;
 }
+const PINATA_JWT_1 = import.meta.env.VITE_PINATA_JWT;
+console.log("PINATA_JWT_1", PINATA_JWT_1)
 
-/**
- * -------------------------------
- * CONFIGURATION & SETUP
- * -------------------------------
- */
+const GATEWAY_URL = import.meta.env.VITE_GATEWAY_URL || "https://gateway.pinata.cloud";
+
 const NETWORK_PASSPHRASE = "Diamante Testnet 2024";
 const server = new Aurora.Server("https://diamtestnet.diamcircle.io/");
 
@@ -46,36 +45,10 @@ const realIssuerPubKey = "GBPTZYVUREREXTENTMWDB2PHJSSXLX4VHDPMA5O56MDNNJTA752EKS
 const fallbackTradeToken = new Asset("TradeToken", realIssuerPubKey);
 
 // Initialize PinataSDK for transaction history pinning.
-// (Replace the JWT with an environment variable for production.)
-const pinata = new PinataSDK({
-  pinataJwt: "YOUR_PINATA_JWT_HERE",
-  pinataGateway: "https://gateway.pinata.cloud",
-});
-
-/**
- * -------------------------------
- * STYLED COMPONENTS
- * -------------------------------
- */
-const DarkCard = styled(Card)({
-  background: "rgba(0, 206, 229, 0.06)",
-  borderRadius: "16px",
-  color: "#fff",
-  padding: "24px",
-  width: "100%",
-  maxWidth: "480px",
-  boxShadow: "0 4px 20px rgba(0,0,0,0.3)",
-});
-
-/**
- * -------------------------------
- * HELPER FUNCTIONS
- * -------------------------------
- */
 
 // Update transaction history via Pinata REST API and save to localStorage.
 async function updateTransactionHistory(transactionData) {
-  const PINATA_JWT = "YOUR_PINATA_JWT_HERE";
+  const PINATA_JWT = PINATA_JWT_1;
   try {
     const response = await fetch("https://api.pinata.cloud/pinning/pinJSONToIPFS", {
       method: "POST",
@@ -96,9 +69,6 @@ async function updateTransactionHistory(transactionData) {
   }
 }
 
-/**
- * Establishes a trustline for the given asset on the connected wallet.
- */
 const establishUserTrustline = async (asset, walletPublicKey) => {
   if (!walletPublicKey) {
     throw new Error("Wallet not connected. Please connect your wallet.");

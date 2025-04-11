@@ -266,8 +266,6 @@ const CreatePoolPage = () => {
       lpAsset.type = "liquidity_pool_constant_product";
       lpAsset.assetType = "liquidity_pool_constant_product";
       addLog("LP Asset created with manual type assignment: " + JSON.stringify(lpAsset));
-
-      // Compute liquidity pool ID using pool parameters object
       let liquidityPoolId;
       try {
         addLog("Calling getLiquidityPoolId with pool parameters...");
