@@ -76,6 +76,7 @@ const LiquidityActionModal = ({
           </IconButton>
         </Box>
         <Divider sx={{ mb: 2 }} />
+
         <Typography variant="body2" sx={{ mb: 2, mt: 2 }}>
           <strong>Pool ID:</strong> {poolId}
         </Typography>
@@ -84,7 +85,7 @@ const LiquidityActionModal = ({
           <>
             <TextField
               label="TradeToken Amount (Deposit)"
-              placeholder="e.g. 50.0"
+              placeholder="e.g., 50.0"
               fullWidth
               variant="outlined"
               helperText="Enter the amount of TradeTokens to deposit."
@@ -104,7 +105,7 @@ const LiquidityActionModal = ({
             />
             <TextField
               label="DIAM Amount (Deposit)"
-              placeholder="e.g. 100.0"
+              placeholder="e.g., 100.0"
               fullWidth
               variant="outlined"
               helperText="Enter the DIAM amount to deposit."
@@ -151,7 +152,7 @@ const LiquidityActionModal = ({
             </Box>
             <TextField
               label="Pool Shares to Burn"
-              placeholder="e.g. 0.5"
+              placeholder="e.g., 0.5"
               fullWidth
               variant="outlined"
               helperText="Enter the number of pool shares you want to burn."
@@ -171,7 +172,7 @@ const LiquidityActionModal = ({
             />
             <TextField
               label="Min TradeToken to Receive"
-              placeholder="e.g. 10.0"
+              placeholder="e.g., 10.0"
               fullWidth
               variant="outlined"
               helperText="Enter the minimum number of TradeTokens you expect to receive."
@@ -196,7 +197,17 @@ const LiquidityActionModal = ({
           <CustomButton
             onClick={handleConfirm}
             disabled={loading}
-       
+            fullWidth
+            style={{
+              background: "linear-gradient(90deg, #6A5AE0, #E75480)",
+              color: "#fff",
+              padding: "12px 24px",
+              borderRadius: "8px",
+              textTransform: "none",
+              fontSize: "1rem",
+              boxShadow: "0 4px 12px rgba(0,0,0,0.2)",
+              transition: "opacity 0.3s",
+            }}
           >
             {loading ? (
               <CircularProgress size={24} color="inherit" />

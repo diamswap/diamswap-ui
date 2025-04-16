@@ -32,23 +32,36 @@ import { PinataSDK } from "pinata-web3";
 if (!window.Buffer) {
   window.Buffer = Buffer;
 }
-const PINATA_JWT_1 = import.meta.env.VITE_PINATA_JWT;
-console.log("PINATA_JWT_1", PINATA_JWT_1)
 
-const GATEWAY_URL = import.meta.env.VITE_GATEWAY_URL || "https://gateway.pinata.cloud";
-
+// ---------------------------------------------
+// Configuration & Setup
+// ---------------------------------------------
 const NETWORK_PASSPHRASE = "Diamante Testnet 2024";
+const friendbotUrl = "https://friendbot.diamcircle.io?addr=";
 const server = new Aurora.Server("https://diamtestnet.diamcircle.io/");
+const PINATA_JWT = import.meta.env.VITE_PINATA_JWT;
 
-// Fallback issuer for TradeToken
-const realIssuerPubKey = "GBPTZYVUREREXTENTMWDB2PHJSSXLX4VHDPMA5O56MDNNJTA752EKS7X";
+// Retrieve the user's wallet public key from localStorage.
+const walletPublicKey = localStorage.getItem("diamPublicKey") || "";
+
+// Fallback issuer for TradeToken (use a hard-coded issuer if you’re sure it’s stable in production)
+const realIssuerPubKey = "GBCELHKB7SGUWXYW5S3NGYITDBUXBLV26UT2XAGETMLBWUFFBMI4U2GA";
 const fallbackTradeToken = new Asset("TradeToken", realIssuerPubKey);
 
-// Initialize PinataSDK for transaction history pinning.
+// Initialize PinataSDK using environment variables for security.
+const pinata = new PinataSDK({
+  pinataJwt: import.meta.env.VITE_PINATA_JWT,
+  pinataGateway: import.meta.env.VITE_GATEWAY_URL || "https://gateway.pinata.cloud",
+});
 
-// Update transaction history via Pinata REST API and save to localStorage.
+// ---------------------------------------------
+// Helper Functions
+// ---------------------------------------------
+
+
+
 async function updateTransactionHistory(transactionData) {
-  const PINATA_JWT = PINATA_JWT_1;
+  
   try {
     const response = await fetch("https://api.pinata.cloud/pinning/pinJSONToIPFS", {
       method: "POST",
@@ -69,6 +82,38 @@ async function updateTransactionHistory(transactionData) {
   }
 }
 
+/**
+ * friendbotFund
+ * Funds an account on testnet using Friendbot.
+ * (For production, if funding isn’t needed, you can remove this.)
+ */
+const friendbotFund = async (publicKey) => {
+  try {
+    const resp = await fetch(`${friendbotUrl}${publicKey}`);
+    if (!resp.ok) {
+      if (resp.status === 400) {
+        const errData = await resp.json();
+        if (errData?.detail && errData.detail.includes("createAccountAlreadyExist")) {
+          console.log("Account already exists. Proceeding...");
+          return;
+        } else {
+          throw new Error(errData.detail || resp.statusText);
+        }
+      } else {
+        throw new Error(resp.statusText);
+      }
+    }
+    console.log(`Friendbot funded account: ${publicKey}`);
+  } catch (error) {
+    console.error("Friendbot funding error:", error);
+    throw error;
+  }
+};
+
+/**
+ * establishUserTrustline
+ * Builds, signs, and submits a trustline transaction for the given asset.
+ */
 const establishUserTrustline = async (asset, walletPublicKey) => {
   if (!walletPublicKey) {
     throw new Error("Wallet not connected. Please connect your wallet.");
@@ -84,7 +129,7 @@ const establishUserTrustline = async (asset, walletPublicKey) => {
         limit: "1000000",
       })
     )
-    .setTimeout(300)
+    .setTimeout(30)
     .build();
   console.log("Trustline XDR:", trustTx.toXDR());
   const trustResult = await window.diam.sign(trustTx.toXDR(), true, NETWORK_PASSPHRASE);
@@ -95,9 +140,9 @@ const establishUserTrustline = async (asset, walletPublicKey) => {
 };
 
 /**
- * Determines the dynamic TradeToken issuer from the account balances.
- * It returns the issuer of the TradeToken holding that has a balance greater than
- * the given threshold and buying_liabilities >= 0.001.
+ * getDynamicTradeTokenIssuer
+ * Determines and returns the dynamic issuer for the TradeToken asset from account data.
+ * It logs details for debugging purposes.
  */
 function getDynamicTradeTokenIssuer(accountData, threshold = 1) {
   console.log("Determining dynamic TradeToken issuer...");
@@ -106,8 +151,9 @@ function getDynamicTradeTokenIssuer(accountData, threshold = 1) {
     if (bal.asset_code === "TradeToken") {
       const balance = parseFloat(bal.balance);
       const buyingLiabilities = parseFloat(bal.buying_liabilities || "0");
-      console.log(`Issuer: ${bal.asset_issuer} | Balance: ${balance} | BuyingLiabilities: ${buyingLiabilities}`);
-      return balance > threshold && buyingLiabilities >= 0.001;
+      console.log(`Issuer: ${bal.asset_issuer} | Balance: ${balance} | Buying Liabilities: ${buyingLiabilities}`);
+      // Only include tokens where the balance is above the threshold and there are no significant buying liabilities.
+      return balance > threshold && buyingLiabilities <= 0;
     }
     return false;
   });
@@ -121,8 +167,10 @@ function getDynamicTradeTokenIssuer(accountData, threshold = 1) {
 }
 
 /**
- * Returns an Asset instance for the given asset name.
- * For TradeToken, it uses the dynamic issuer if provided.
+ * getAssetObject
+ * Returns an Asset instance.
+ * For "DIAM", returns the native asset.
+ * For "TradeToken", if a dynamic issuer is available, it creates a new Asset using that issuer; otherwise, returns the fallback asset.
  */
 const getAssetObject = (assetName, dynamicIssuer = null) => {
   if (assetName === "DIAM") {
@@ -134,7 +182,8 @@ const getAssetObject = (assetName, dynamicIssuer = null) => {
 };
 
 /**
- * Swap Transaction Functions: Strict Send and Strict Receive Swap.
+ * doStrictSendSwap
+ * Executes the Path Payment Strict Send operation.
  */
 const doStrictSendSwap = async (
   walletPublicKey,
@@ -161,11 +210,15 @@ const doStrictSendSwap = async (
     )
     .setTimeout(300)
     .build();
-  console.log("Strict Send Swap XDR:", swapTx.toXDR());
+  console.log("Strict Send Swap Transaction XDR:", swapTx.toXDR());
   if (!window.diam || typeof window.diam.sign !== "function") {
     throw new Error("DIAM Wallet extension not available for signing.");
   }
-  const signResult = await window.diam.sign(swapTx.toXDR(), true, NETWORK_PASSPHRASE);
+  const signResult = await window.diam.sign(
+    swapTx.toXDR(),
+    true,
+    NETWORK_PASSPHRASE
+  );
   console.log("Strict Send Swap sign response:", signResult);
   if (
     signResult &&
@@ -186,6 +239,10 @@ const doStrictSendSwap = async (
   return finalHash || null;
 };
 
+/**
+ * doStrictReceiveSwap
+ * Executes the Path Payment Strict Receive operation.
+ */
 const doStrictReceiveSwap = async (
   walletPublicKey,
   fromAsset,
@@ -211,11 +268,15 @@ const doStrictReceiveSwap = async (
     )
     .setTimeout(300)
     .build();
-  console.log("Strict Receive Swap XDR:", swapTx.toXDR());
+  console.log("Strict Receive Swap Transaction XDR:", swapTx.toXDR());
   if (!window.diam || typeof window.diam.sign !== "function") {
     throw new Error("DIAM Wallet extension not available for signing.");
   }
-  const signResult = await window.diam.sign(swapTx.toXDR(), true, NETWORK_PASSPHRASE);
+  const signResult = await window.diam.sign(
+    swapTx.toXDR(),
+    true,
+    NETWORK_PASSPHRASE
+  );
   console.log("Strict Receive Swap sign response:", signResult);
   let finalHash = signResult.hash;
   if (!finalHash && signResult.message?.data?.hash) {
@@ -225,17 +286,15 @@ const doStrictReceiveSwap = async (
   return finalHash || null;
 };
 
-/**
- * ---------------------------------------------
- * SwapPage Component
- * ---------------------------------------------
- */
+// ---------------------------------------------
+// SwapPage Component - Swap (No Pool Creation)
+// ---------------------------------------------
 export default function SwapPage() {
-  // On mount, optionally fund the issuer (not implemented here)
+  // Optionally fund the issuer (if needed). For production, remove friendbot logic if not required.
   useEffect(() => {
     async function fundIssuer() {
       try {
-        // issuer funding logic (if necessary)
+        // Issuer funding logic (if necessary)
       } catch (e) {
         console.error("Failed to fund issuer:", e);
       }
@@ -243,7 +302,7 @@ export default function SwapPage() {
     fundIssuer();
   }, []);
 
-  // Component state for user inputs and transaction handling.
+  // Component state for swap inputs and transaction handling.
   const [fromAsset, setFromAsset] = useState("DIAM");
   const [toAsset, setToAsset] = useState("TradeToken");
   const [sendAmount, setSendAmount] = useState("");
@@ -254,22 +313,17 @@ export default function SwapPage() {
   const [transactionStatus, setTransactionStatus] = useState("");
   const [transactionMessage, setTransactionMessage] = useState("");
   const [transactionHash, setTransactionHash] = useState("");
-  const [walletPublicKey] = useState(() => localStorage.getItem("diamPublicKey") || "");
 
-  // State for the dynamic TradeToken issuer.
+  // State for dynamic TradeToken issuer determined from account balances.
   const [dynamicIssuer, setDynamicIssuer] = useState(null);
 
   // Calculated estimated received value.
   const estimatedReceived =
-    sendAmount && price
-      ? (parseFloat(sendAmount) * parseFloat(price)).toFixed(7)
-      : "";
+    sendAmount && price ? (parseFloat(sendAmount) * parseFloat(price)).toFixed(7) : "";
 
   // Input handlers.
-  const handleSendAmountChange = (e) =>
-    setSendAmount(e.target.value.replace(/[^0-9.]/g, ""));
-  const handlePriceChange = (e) =>
-    setPrice(e.target.value.replace(/[^0-9.]/g, ""));
+  const handleSendAmountChange = (e) => setSendAmount(e.target.value.replace(/[^0-9.]/g, ""));
+  const handlePriceChange = (e) => setPrice(e.target.value.replace(/[^0-9.]/g, ""));
   const handleFromAssetChange = (e) => setFromAsset(e.target.value);
   const handleToAssetChange = (e) => setToAsset(e.target.value);
 
@@ -289,7 +343,10 @@ export default function SwapPage() {
     loadAccountData();
   }, [walletPublicKey]);
 
-  // Swap flow for Strict Send Swap.
+  /**
+   * handleStrictSendSwapClick
+   * Executes the Path Payment Strict Send swap flow.
+   */
   const handleStrictSendSwapClick = async () => {
     setLoading(true);
     setTxStatus("Starting strict send swap flow...");
@@ -297,12 +354,14 @@ export default function SwapPage() {
     setTransactionStatus("pending");
     setTransactionMessage("Processing strict send swap...");
     try {
-      // Establish trustline if the swap involves TradeToken.
       if (fromAsset === "TradeToken" || toAsset === "TradeToken") {
         setTransactionMessage("Establishing trustline for TradeToken...");
         await establishUserTrustline(getAssetObject("TradeToken", dynamicIssuer), walletPublicKey);
       }
-      // Build transaction parameters.
+      // For testing/demo, fund the wallet via friendbot. Remove in production if not needed.
+      setTransactionMessage("Funding wallet via Friendbot...");
+      await friendbotFund(walletPublicKey);
+
       const slippageTolerance = 0.95;
       const safeSendAmount =
         sendAmount && parseFloat(sendAmount) > 0
@@ -310,7 +369,9 @@ export default function SwapPage() {
           : "1.0000000";
       const computedEstimated = estimatedReceived ? parseFloat(estimatedReceived) : 0;
       const safeDestMin =
-        computedEstimated > 0 ? (computedEstimated * slippageTolerance).toFixed(7) : "0.0100000";
+        computedEstimated > 0
+          ? (computedEstimated * slippageTolerance).toFixed(7)
+          : "0.0100000";
 
       const swapHash = await doStrictSendSwap(
         walletPublicKey,
@@ -327,6 +388,7 @@ export default function SwapPage() {
       setTransactionMessage("Strict send swap completed successfully!");
       setTransactionHash(finalHash);
 
+      // Build transaction history data.
       const transactionData = {
         txHash: finalHash,
         fromAsset,
@@ -347,7 +409,10 @@ export default function SwapPage() {
     }
   };
 
-  // Swap flow for Strict Receive Swap.
+  /**
+   * handleStrictReceiveSwapClick
+   * Executes the Path Payment Strict Receive swap flow.
+   */
   const handleStrictReceiveSwapClick = async () => {
     setLoading(true);
     setTxStatus("Starting strict receive swap flow...");
@@ -359,6 +424,9 @@ export default function SwapPage() {
         setTransactionMessage("Establishing trustline for TradeToken...");
         await establishUserTrustline(getAssetObject("TradeToken", dynamicIssuer), walletPublicKey);
       }
+      setTransactionMessage("Funding wallet via Friendbot...");
+      await friendbotFund(walletPublicKey);
+
       const safeDestAmount =
         estimatedReceived && parseFloat(estimatedReceived) > 0
           ? parseFloat(estimatedReceived).toFixed(7)
@@ -404,7 +472,7 @@ export default function SwapPage() {
   };
 
   return (
-    <Container maxWidth="sm" sx={{ marginTop: "40px", marginBottom: "40px" }}>
+    <Container maxWidth="sm" sx={{ mt: 4, mb: 4 }}>
       {/* Swap Form */}
       <Card
         sx={{
@@ -516,6 +584,7 @@ export default function SwapPage() {
             {loading ? <CircularProgress size={24} /> : "Swap (Strict Receive)"}
           </CustomButton>
         </CardActions>
+
         {txStatus && (
           <Typography
             variant="caption"
