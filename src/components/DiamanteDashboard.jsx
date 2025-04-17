@@ -375,7 +375,7 @@ export default function DiamanteDashboard() {
                           <TableCell sx={{ color: "#fff" }}>
                             <Typography
                               component="a"
-                              href={`https://testnetexplorer.diamante.io/transactions/${tx.hash}`}
+                              href={`https://testnetexplorer.diamante.io/about-tx-hash/${tx.hash}`}
                               target="_blank"
                               rel="noopener noreferrer"
                               sx={{
@@ -437,7 +437,7 @@ export default function DiamanteDashboard() {
                           <TableCell sx={{ color: "#fff" }}>
                             <Typography
                               component="a"
-                              href={`https://testnetexplorer.diamante.io/transactions/${tx.hash}`}
+                              href={`https://testnetexplorer.diamante.io/about-tx-hash/${tx.hash}`}
                               target="_blank"
                               rel="noopener noreferrer"
                               sx={{

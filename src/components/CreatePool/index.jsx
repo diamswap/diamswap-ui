@@ -7,6 +7,10 @@ import {
   TextField,
   InputAdornment,
   CircularProgress,
+  MenuItem,
+  Autocomplete,
+  createFilterOptions,
+  Popper,
 } from "@mui/material";
 import { AiOutlinePlusCircle } from "react-icons/ai";
 import CustomButton from "../../comman/CustomButton";
@@ -25,6 +29,7 @@ const CreatePoolPage = () => {
   const [tokenA, setTokenA] = useState("native");
   const [tokenB, setTokenB] = useState("");
   const [loading, setLoading] = useState(false);
+  const [tokensList, setTokensList] = useState([]);
   const [logs, setLogs] = useState([]);
   const [poolDetails, setPoolDetails] = useState(null);
   const [modalOpen, setModalOpen] = useState(false);
@@ -46,6 +51,12 @@ const CreatePoolPage = () => {
   };
 
 
+  const filter = createFilterOptions({
+    matchFrom: "any",
+    stringify: (option) => option,
+  });
+
+
 
   useEffect(() => {
     (async () => {
@@ -63,6 +74,48 @@ const CreatePoolPage = () => {
         addLog("Error loading Diamnet SDK: " + error.toString());
       }
     })();
+  }, []);
+
+
+  /* ---------- helper: pretty label in the dropdown ---------- */
+const formatAssetLabel = (asset) => {
+  if (!asset) return "";
+  const val = asset.toLowerCase();
+  if (val === "native" || val === "xlm") return "native";
+  const [code, issuer = ""] = asset.split(":");
+  return `${code} • ${issuer.slice(0, 4)}…${issuer.slice(-4)}`;
+};
+
+
+
+
+
+
+
+
+  useEffect(() => {
+    const fetchPools = async () => {
+      try {
+        const resp = await fetch(
+          "https://diamtestnet.diamcircle.io/liquidity_pools/?limit=100"
+        );
+        const data = await resp.json();
+        const records = data._embedded.records || [];
+        const setTokens = new Set();
+        records.forEach((pool) => {
+          pool.reserves.forEach((r) => {
+            if (r.asset !== "native") {
+              setTokens.add(r.asset);
+            }
+          });
+        });
+        setTokensList(Array.from(setTokens));
+        addLog(`Fetched ${setTokens.size} tokens for selection.`);
+      } catch (error) {
+        addLog("Error fetching pools: " + error.toString());
+      }
+    };
+    fetchPools();
   }, []);
 
   // Auto-fill Token B when SDK and issuer are available
@@ -380,41 +433,75 @@ const CreatePoolPage = () => {
         <Typography variant="h5" align="center">
           Create Liquidity Pool
         </Typography>
-        <TextField
-          fullWidth
-          label="Token A"
+        <Autocomplete
+          freeSolo
+          options={["native", ...tokensList]}
           value={tokenA}
-          onChange={(e) => setTokenA(e.target.value)}
-          margin="normal"
-          InputProps={{
-            style: {
-              color: "#fff",
-              border: "1px solid #FFFFFF4D",
-            },
-            endAdornment: (
-              <InputAdornment position="end">
-                <AiOutlinePlusCircle />
-              </InputAdornment>
-            ),
-          }}
+          inputValue={tokenA}
+          onChange={(_, val) => setTokenA(val || "")}
+          onInputChange={(_, val) => setTokenA(val)}
+          filterOptions={filter}
+          PopperComponent={(p) => <Popper {...p} sx={{ zIndex: 1400 }} />}
+          renderInput={(params) => (
+            <TextField
+              {...params}
+              label="Token A"
+              margin="normal"
+              InputProps={{
+                ...params.InputProps,
+                style: { color: "#fff", border: "1px solid #FFFFFF4D" },
+                endAdornment: (
+                  <>
+                    {params.InputProps.endAdornment}
+                    <InputAdornment position="end">
+                      <AiOutlinePlusCircle />
+                    </InputAdornment>
+                  </>
+                ),
+              }}
+            />
+          )}
+          renderOption={(props, option) => (
+            <MenuItem {...props} key={option}>
+              {formatAssetLabel(option)}
+            </MenuItem>
+          )}
         />
-        <TextField
-          fullWidth
-          label="Token B"
+
+        {/* -------------------- TOKEN B (searchable) -------------------- */}
+        <Autocomplete
+          freeSolo
+          options={tokensList}
           value={tokenB}
-          onChange={(e) => setTokenB(e.target.value)}
-          margin="normal"
-          InputProps={{
-            style: {
-              color: "#fff",
-              border: "1px solid #FFFFFF4D",
-            },
-            endAdornment: (
-              <InputAdornment position="end">
-                <AiOutlinePlusCircle />
-              </InputAdornment>
-            ),
-          }}
+          inputValue={tokenB}
+          onChange={(_, val) => setTokenB(val || "")}
+          onInputChange={(_, val) => setTokenB(val)}
+          filterOptions={filter}
+          PopperComponent={(p) => <Popper {...p} sx={{ zIndex: 1400 }} />}
+          renderInput={(params) => (
+            <TextField
+              {...params}
+              label="Token B"
+              margin="normal"
+              InputProps={{
+                ...params.InputProps,
+                style: { color: "#fff", border: "1px solid #FFFFFF4D" },
+                endAdornment: (
+                  <>
+                    {params.InputProps.endAdornment}
+                    <InputAdornment position="end">
+                      <AiOutlinePlusCircle />
+                    </InputAdornment>
+                  </>
+                ),
+              }}
+            />
+          )}
+          renderOption={(props, option) => (
+            <MenuItem {...props} key={option}>
+              {formatAssetLabel(option)}
+            </MenuItem>
+          )}
         />
         <CustomButton
           onClick={handleCreatePool}
