@@ -30,6 +30,9 @@ import {
   useMediaQuery,
   ListItemIcon,
   Avatar,
+  Popover,
+  Button,
+  Tooltip,
 } from "@mui/material";
 import { styled, useTheme } from "@mui/material/styles";
 import CustomButton from "../../comman/CustomButton";
@@ -37,6 +40,11 @@ import TransactionModal from "../../comman/TransactionModal";
 import { PinataSDK } from "pinata-web3";
 import { IoCloseCircleOutline, IoSearch } from "react-icons/io5";
 import swap from "../../assets/swap.png";
+import {
+  MdInfoOutline,
+  MdOutlineSettingsInputComponent,
+  MdSettingsInputComponent,
+} from "react-icons/md";
 
 // Polyfill Buffer for browser support
 if (!window.Buffer) {
@@ -50,21 +58,9 @@ const NETWORK_PASSPHRASE = "Diamante Testnet 2024";
 const friendbotUrl = "https://friendbot.diamcircle.io?addr=";
 const server = new Aurora.Server("https://diamtestnet.diamcircle.io/");
 const PINATA_JWT = import.meta.env.VITE_PINATA_JWT;
-
-// Retrieve the user's wallet public key from localStorage.
 const walletPublicKey = localStorage.getItem("diamPublicKey") || "";
-
-// Fallback issuer for TradeToken
 const realIssuerPubKey =
   "GBCELHKB7SGUWXYW5S3NGYITDBUXBLV26UT2XAGETMLBWUFFBMI4U2GA";
-const fallbackTradeToken = new Asset("TradeToken", realIssuerPubKey);
-
-// Initialize PinataSDK
-const pinata = new PinataSDK({
-  pinataJwt: import.meta.env.VITE_PINATA_JWT,
-  pinataGateway:
-    import.meta.env.VITE_GATEWAY_URL || "https://gateway.pinata.cloud",
-});
 
 // ---------------------------------------------
 // Helper Functions (dynamic token extraction)
@@ -77,24 +73,53 @@ function extractTokenCode(assetStr) {
 
 function getAvailableTokens(liquidityPools) {
   const tokenSet = new Set();
-  liquidityPools.forEach((pool) => {
-    pool.reserves.forEach((reserve) => {
-      tokenSet.add(extractTokenCode(reserve.asset));
-    });
-  });
+  liquidityPools.forEach((pool) =>
+    pool.reserves.forEach((reserve) =>
+      tokenSet.add(extractTokenCode(reserve.asset))
+    )
+  );
   return Array.from(tokenSet);
 }
 
+/**
+ * Find the best constant‐product pool for a given pair,
+ * ignoring pools with zero reserves and favoring the deepest one.
+ */
 function getPoolForPair(fromToken, toToken, liquidityPools) {
-  return liquidityPools.find((pool) => {
-    const hasFrom = pool.reserves.some(
+  const candidates = liquidityPools.filter((pool) => {
+    const fromRes = pool.reserves.find(
       (r) => extractTokenCode(r.asset) === fromToken
     );
-    const hasTo = pool.reserves.some(
+    const toRes = pool.reserves.find(
       (r) => extractTokenCode(r.asset) === toToken
     );
-    return hasFrom && hasTo;
+    return (
+      fromRes &&
+      toRes &&
+      parseFloat(fromRes.amount) > 0 &&
+      parseFloat(toRes.amount) > 0
+    );
   });
+
+  if (candidates.length === 0) return null;
+
+  candidates.sort((a, b) => {
+    const aFrom = parseFloat(
+      a.reserves.find((r) => extractTokenCode(r.asset) === fromToken).amount
+    );
+    const aTo = parseFloat(
+      a.reserves.find((r) => extractTokenCode(r.asset) === toToken).amount
+    );
+    const bFrom = parseFloat(
+      b.reserves.find((r) => extractTokenCode(r.asset) === fromToken).amount
+    );
+    const bTo = parseFloat(
+      b.reserves.find((r) => extractTokenCode(r.asset) === toToken).amount
+    );
+    return bFrom * bTo - aFrom * aTo;
+  });
+
+  return candidates[0];
 }
 
 // ---------------------------------------------
@@ -102,6 +127,7 @@ function getPoolForPair(fromToken, toToken, liquidityPools) {
 // ---------------------------------------------
 async function updateTransactionHistory(transactionData) {
   try {
+    console.log("updateTransactionHistory: pinning data", transactionData);
     const response = await fetch(
       "https://api.pinata.cloud/pinning/pinJSONToIPFS",
       {
@@ -114,7 +140,7 @@ async function updateTransactionHistory(transactionData) {
       }
     );
     const result = await response.json();
-    console.log("Pinned transaction data:", result);
+    console.log("Pinned transaction data result:", result);
     const history = JSON.parse(localStorage.getItem("txHistory") || "[]");
     history.push({ ...transactionData, ipfsHash: result.IpfsHash });
     localStorage.setItem("txHistory", JSON.stringify(history));
@@ -126,6 +152,7 @@ async function updateTransactionHistory(transactionData) {
 
 const friendbotFund = async (publicKey) => {
   try {
+    console.log(`Calling friendbot for ${publicKey}`);
     const resp = await fetch(`${friendbotUrl}${publicKey}`);
     if (!resp.ok) {
       if (resp.status === 400) {
@@ -155,6 +182,12 @@ const establishUserTrustline = async (asset, walletPublicKey) => {
     throw new Error("Wallet not connected. Please connect your wallet.");
   }
   const userAccount = await server.loadAccount(walletPublicKey);
+  console.log(
+    "Establishing trustline on account:",
+    walletPublicKey,
+    "asset:",
+    asset
+  );
   const trustTx = new TransactionBuilder(userAccount, {
     fee: BASE_FEE,
     networkPassphrase: NETWORK_PASSPHRASE,
@@ -179,33 +212,39 @@ const establishUserTrustline = async (asset, walletPublicKey) => {
   return response.hash;
 };
 
+// Replace your broken version with this one:
+
+// 1) restore the original signature (no toAsset/fromAsset parameters):
 function getDynamicTradeTokenIssuer(accountData, threshold = 1) {
-  console.log("Determining dynamic TradeToken issuer...");
+  console.log("Determining dynamic TradeToken issuer…");
   if (!accountData || !accountData.balances) return null;
-  const qualifyingTokens = accountData.balances.filter((bal) => {
-    if (bal.asset_code === "TradeToken") {
-      const balance = parseFloat(bal.balance);
-      const buyingLiabilities = parseFloat(bal.buying_liabilities || "0");
-      return balance > threshold && buyingLiabilities <= 0;
-    }
-    return false;
+  const qualifying = accountData.balances.filter((bal) => {
+    return (
+      bal.asset_code === "TradeToken" &&
+      parseFloat(bal.balance) > threshold &&
+      parseFloat(bal.buying_liabilities || "0") <= 0
+    );
   });
-  if (qualifyingTokens.length === 0) return null;
-  qualifyingTokens.sort(
-    (a, b) => parseFloat(b.balance) - parseFloat(a.balance)
-  );
-  const selectedIssuer = qualifyingTokens[0].asset_issuer;
-  return selectedIssuer;
+  if (!qualifying.length) return null;
+  // pick the one with the largest balance
+  qualifying.sort((a, b) => parseFloat(b.balance) - parseFloat(a.balance));
+  console.log("Selected dynamic issuer:", qualifying[0].asset_issuer);
+  return qualifying[0].asset_issuer;
 }
+
+// 1) After fetching pools:
+
+// 2) Then replace your getAssetObject with:
 
 const getAssetObject = (assetName, dynamicIssuer = null) => {
   if (assetName === "DIAM") {
     return Asset.native();
-  } else if (assetName === "TradeToken") {
-    return fallbackTradeToken;
   }
-  // If an asset is not recognized (e.g. test0011) throw an error.
-  throw new Error(`Unknown asset: ${assetName}`);
+  const issuer = dynamicIssuer || tokenIssuers[assetName] || realIssuerPubKey;
+  if (!issuer) {
+    throw new Error(`Unknown asset: ${assetName}`);
+  }
+  return new Asset(assetName, issuer);
 };
 
 const doStrictSendSwap = async (
@@ -216,6 +255,14 @@ const doStrictSendSwap = async (
   destMin,
   dynamicIssuer = null
 ) => {
+  console.log("doStrictSendSwap params:", {
+    walletPublicKey,
+    fromAsset,
+    toAsset,
+    sendAmount,
+    destMin,
+    dynamicIssuer,
+  });
   const userAccount = await server.loadAccount(walletPublicKey);
   const swapTx = new TransactionBuilder(userAccount, {
     fee: BASE_FEE,
@@ -223,16 +270,17 @@ const doStrictSendSwap = async (
   })
     .addOperation(
       Operation.pathPaymentStrictSend({
-        sendAsset: getAssetObject(fromAsset, dynamicIssuer),
+        sendAsset: getAssetObject(fromAsset, dynamicIssuer, toAsset),
         sendAmount,
         destination: walletPublicKey,
-        destAsset: getAssetObject(toAsset, dynamicIssuer),
+        destAsset: getAssetObject(toAsset, dynamicIssuer, toAsset),
         destMin,
         path: [],
       })
     )
     .setTimeout(300)
     .build();
+  console.log("Swap XDR:", swapTx.toXDR());
   if (!window.diam || typeof window.diam.sign !== "function") {
     throw new Error("DIAM Wallet extension not available for signing.");
   }
@@ -241,24 +289,20 @@ const doStrictSendSwap = async (
     true,
     NETWORK_PASSPHRASE
   );
+  console.log("Swap sign response:", signResult);
   if (
-    signResult &&
-    signResult.message &&
-    signResult.message.extras &&
-    signResult.message.extras.result_codes &&
-    Array.isArray(signResult.message.extras.result_codes.operations) &&
-    signResult.message.extras.result_codes.operations.includes(
+    signResult?.message?.extras?.result_codes?.operations?.includes(
       "op_too_few_offers"
     )
   ) {
-    console.warn("Received 'op_too_few_offers', insufficient liquidity.");
+    console.warn("insufficient liquidity (op_too_few_offers). Returning N/A");
     return "N/A";
   }
-  let finalHash = signResult.hash;
-  if (!finalHash && signResult.message?.data?.hash) {
-    finalHash = signResult.message.data.hash;
-  }
-  return finalHash || null;
+  console.log(
+    "Swap completed, result hash:",
+    signResult.hash || signResult.message?.data?.hash
+  );
+  return signResult.hash || signResult.message?.data?.hash || null;
 };
 
 const doStrictReceiveSwap = async (
@@ -269,6 +313,14 @@ const doStrictReceiveSwap = async (
   destAmount,
   dynamicIssuer = null
 ) => {
+  console.log("doStrictReceiveSwap params:", {
+    walletPublicKey,
+    fromAsset,
+    toAsset,
+    sendMax,
+    destAmount,
+    dynamicIssuer,
+  });
   const userAccount = await server.loadAccount(walletPublicKey);
   const swapTx = new TransactionBuilder(userAccount, {
     fee: BASE_FEE,
@@ -276,16 +328,17 @@ const doStrictReceiveSwap = async (
   })
     .addOperation(
       Operation.pathPaymentStrictReceive({
-        sendAsset: getAssetObject(fromAsset, dynamicIssuer),
+        sendAsset: getAssetObject(fromAsset, dynamicIssuer, toAsset, fromAsset),
         sendMax,
         destination: walletPublicKey,
-        destAsset: getAssetObject(toAsset, dynamicIssuer),
+        destAsset: getAssetObject(toAsset, dynamicIssuer, toAsset, fromAsset),
         destAmount,
         path: [],
       })
     )
     .setTimeout(300)
     .build();
+  console.log("Receive swap XDR:", swapTx.toXDR());
   if (!window.diam || typeof window.diam.sign !== "function") {
     throw new Error("DIAM Wallet extension not available for signing.");
   }
@@ -294,15 +347,12 @@ const doStrictReceiveSwap = async (
     true,
     NETWORK_PASSPHRASE
   );
-  let finalHash = signResult.hash;
-  if (!finalHash && signResult.message?.data?.hash) {
-    finalHash = signResult.message.data.hash;
-  }
-  return finalHash || null;
+  console.log("Receive swap sign response:", signResult);
+  return signResult.hash || signResult.message?.data?.hash || null;
 };
 
 // ---------------------------------------------
-// A simple token selector modal with search
+// Token selector modal
 // ---------------------------------------------
 function TokenSelectModal({
   open,
@@ -312,109 +362,65 @@ function TokenSelectModal({
   title = "Select a token",
 }) {
   const [searchQuery, setSearchQuery] = useState("");
-
   const filteredTokens = tokens.filter((tk) =>
     tk.toLowerCase().includes(searchQuery.toLowerCase())
   );
-
-  const handleSelect = (token) => {
-    onSelectToken(token);
-    onClose();
-  };
-
   return (
     <Dialog open={open} onClose={onClose} fullWidth maxWidth="xs">
       <Box
         sx={{
           backgroundColor: "#000",
-          padding: "16px",
-          borderRadius: "8px",
-          width: "350px",
+          p: 2,
+          borderRadius: 1,
           maxHeight: "70vh",
           overflowY: "auto",
-          boxShadow: "0 4px 20px rgba(0, 0, 0, 0.3)",
-          position: "relative",
-          border: "1px solid gray",
-          scrollbarWidth: "none",
-          "&::-webkit-scrollbar": {
-            display: "none",
-          },
         }}
       >
-        <DialogTitle sx={{ color: "#fff" }}>
+        <DialogTitle sx={{ color: "#fff", position: "relative" }}>
           {title}
           <IconButton
-            aria-label="close"
             onClick={onClose}
-            sx={{
-              position: "absolute",
-              right: 8,
-              top: 8,
-              color: "#aaa",
-            }}
+            sx={{ position: "absolute", top: 8, right: 8, color: "#aaa" }}
           >
             <IoCloseCircleOutline />
           </IconButton>
         </DialogTitle>
-        <DialogContent sx={{ bgcolor: "#000", color: "#fff", pb: 2 }}>
-          <Box sx={{ display: "flex", mb: 2 }}>
-            <TextField
-              placeholder="Token name or address"
-              fullWidth
-              size="small"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              sx={{
-                "& .MuiInputBase-root": {
-                  color: "white",
-                  backgroundColor: "rgba(255, 255, 255, 0.05)",
-                  borderRadius: "12px",
-                },
-              }}
-              InputProps={{
-                endAdornment: (
-                  <InputAdornment position="end">
-                    <IoSearch style={{ color: "gray" }} />
-                  </InputAdornment>
-                ),
-              }}
-            />
-          </Box>
-          <List
-            sx={{
-              maxHeight: 300,
-              overflowY: "auto",
-              scrollbarWidth: "none",
-              "&::-webkit-scrollbar": {
-                display: "none",
+        <DialogContent>
+          <TextField
+            placeholder="Search token"
+            fullWidth
+            size="small"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            InputProps={{
+              sx: {
+                backgroundColor: "rgba(255,255,255,0.1)",
+                borderRadius: 1,
               },
+              endAdornment: (
+                <InputAdornment position="end">
+                  <IoSearch style={{ color: "#888" }} />
+                </InputAdornment>
+              ),
             }}
-          >
+          />
+          <List sx={{ mt: 1 }}>
             {filteredTokens.map((tk) => (
               <ListItemButton
                 key={tk}
-                sx={{
-                  borderRadius: "12px",
-                  "&:hover": {
-                    bgcolor: "rgba(255, 255, 255, 0.1)",
-                  },
+                onClick={() => {
+                  onSelectToken(tk);
+                  onClose();
                 }}
-                onClick={() => handleSelect(tk)}
               >
-                <ListItemIcon sx={{ color: "white" }}>
-                  <Avatar sx={{ width: 29, height: 29 }} />
+                <ListItemIcon>
+                  <Avatar sx={{ width: 24, height: 24 }} />
                 </ListItemIcon>
-                <ListItemText
-                  primary={tk}
-                  sx={{ color: "#fff", textTransform: "uppercase" }}
-                />
+                <ListItemText primary={tk.toUpperCase()} />
               </ListItemButton>
             ))}
             {filteredTokens.length === 0 && (
-              <Typography
-                variant="body2"
-                sx={{ color: "#bbb", textAlign: "center", mt: 2 }}
-              >
+              <Typography sx={{ textAlign: "center", mt: 2, color: "#aaa" }}>
                 No matching tokens
               </Typography>
             )}
@@ -426,16 +432,13 @@ function TokenSelectModal({
 }
 
 // ---------------------------------------------
-// SwapPage Component - UI that looks like your screenshot
+// SwapPage Component
 // ---------------------------------------------
 export default function SwapPage() {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down("sm"));
 
-  // State to hold user account data for balance checking.
   const [userAccountData, setUserAccountData] = useState(null);
-
-  // Swap inputs and transaction states.
   const [fromAsset, setFromAsset] = useState("DIAM");
   const [toAsset, setToAsset] = useState("TradeToken");
   const [sendAmount, setSendAmount] = useState("");
@@ -445,241 +448,296 @@ export default function SwapPage() {
   const [transactionStatus, setTransactionStatus] = useState("");
   const [transactionMessage, setTransactionMessage] = useState("");
   const [transactionHash, setTransactionHash] = useState("");
-
-  // State for dynamic TradeToken issuer.
   const [dynamicIssuer, setDynamicIssuer] = useState(null);
-
-  // Liquidity pool and token list.
   const [liquidityPools, setLiquidityPools] = useState([]);
   const [availableTokens, setAvailableTokens] = useState([]);
-
-  // State for token selection modal.
   const [selectTokenModalOpen, setSelectTokenModalOpen] = useState(false);
-  const [activeSide, setActiveSide] = useState("from"); // "from" or "to"
+  const [activeSide, setActiveSide] = useState("from");
 
-  // ---------------------------------------------
-  // Fetch liquidity pool & user account data on mount.
-  // ---------------------------------------------
+  // ** New state for slippage control **
+  const [slippageTolerance, setSlippageTolerance] = useState(5); // in %
+  const [slippageAnchorEl, setSlippageAnchorEl] = useState(null);
+  const slippageOpen = Boolean(slippageAnchorEl);
+  const handleSlippageClick = (e) => setSlippageAnchorEl(e.currentTarget);
+  const handleSlippageClose = () => setSlippageAnchorEl(null);
+
   useEffect(() => {
     async function init() {
       try {
+        console.log("Fetching liquidity pools...");
         const resp = await fetch(
           "https://diamtestnet.diamcircle.io/liquidity_pools/?limit=100"
         );
         const data = await resp.json();
-        console.log("dataToke", data)
+        console.log("Liquidity pools fetched:", data._embedded.records.length);
         setLiquidityPools(data._embedded.records);
-        const tokens = getAvailableTokens(data._embedded.records);
-        setAvailableTokens(tokens);
+        setAvailableTokens(getAvailableTokens(data._embedded.records));
       } catch (e) {
-        console.error("Error fetching liquidity pools:", e);
+        console.error("Error fetching pools:", e);
       }
-
       if (walletPublicKey) {
         try {
-          const account = await server
+          console.log("Loading user account data for", walletPublicKey);
+          const acct = await server
             .accounts()
             .accountId(walletPublicKey)
             .call();
-          setUserAccountData(account);
-          const issuer = getDynamicTradeTokenIssuer(account, 1);
+          console.log("User account data:", acct);
+          setUserAccountData(acct);
+          const issuer = getDynamicTradeTokenIssuer(
+            acct,
+            1,
+            toAsset,
+            fromAsset
+          );
           setDynamicIssuer(issuer);
         } catch (err) {
-          console.error("Error loading user account:", err);
+          console.error("Error loading account:", err);
         }
       }
     }
     init();
   }, []);
 
-  // ---------------------------------------------
-  // Helper for balance check: returns true if user has sufficient balance for a given token and amount.
-  // ---------------------------------------------
   const checkSufficientBalance = (token, amount) => {
     if (!userAccountData || !amount) return false;
-    const balanceEntry = userAccountData.balances.find((entry) => {
-      if (token === "DIAM") {
-        return entry.asset_type === "native";
-      }
-      return entry.asset_code === token;
-    });
-    if (!balanceEntry) return false;
-    return parseFloat(balanceEntry.balance) >= parseFloat(amount);
+    const entry = userAccountData.balances.find((b) =>
+      token === "DIAM" ? b.asset_type === "native" : b.asset_code === token
+    );
+    return entry && parseFloat(entry.balance) >= parseFloat(amount);
   };
 
-  // ---------------------------------------------
-  // Calculation: Estimated Received Amount
-  // ---------------------------------------------
   const calcEstimatedReceived = () => {
     if (!sendAmount) return "";
     const pool = getPoolForPair(fromAsset, toAsset, liquidityPools);
     if (!pool) return "";
-    let inReserve, outReserve;
-    pool.reserves.forEach((reserve) => {
-      const token = extractTokenCode(reserve.asset);
-      if (token === fromAsset) {
-        inReserve = parseFloat(reserve.amount);
-      } else if (token === toAsset) {
-        outReserve = parseFloat(reserve.amount);
-      }
-    });
+
+    const inReserve = parseFloat(
+      pool.reserves.find((r) => extractTokenCode(r.asset) === fromAsset)
+        ?.amount || 0
+    );
+    const outReserve = parseFloat(
+      pool.reserves.find((r) => extractTokenCode(r.asset) === toAsset)
+        ?.amount || 0
+    );
     if (!inReserve || !outReserve) return "";
-    const feeBP = parseFloat(pool.fee_bp);
-    const feeRate = feeBP / 10000;
+
+    const feeRate = pool.fee_bp / 10000;
     const effectiveSend = parseFloat(sendAmount) * (1 - feeRate);
     const dy = (outReserve * effectiveSend) / (inReserve + effectiveSend);
+
+    console.log(
+      `UI estimate → feeRate=${feeRate}, effectiveSend=${effectiveSend}, dy=${dy}`
+    );
     return dy.toFixed(4);
   };
+
   const estimatedReceived = calcEstimatedReceived();
 
-  // Compute ratio: "1 fromAsset = X toAsset"
-  const computedRatio = () => {
+  const ratioValue = (() => {
     if (!sendAmount || !estimatedReceived) return "NaN";
-    const sendAmt = parseFloat(sendAmount);
-    const recvAmt = parseFloat(estimatedReceived);
-    if (sendAmt > 0 && recvAmt > 0) {
-      return (recvAmt / sendAmt).toFixed(4);
-    }
-    return "NaN";
-  };
-  const ratioValue = computedRatio();
+    const s = parseFloat(sendAmount),
+      r = parseFloat(estimatedReceived);
+    return s > 0 && r > 0 ? (r / s).toFixed(4) : "NaN";
+  })();
 
-  // ---------------------------------------------
-  // Handlers for token selection modal
-  // ---------------------------------------------
   const openSelectTokenModal = (side) => {
     setActiveSide(side);
     setSelectTokenModalOpen(true);
   };
-  const handleSelectToken = (token) => {
-    if (activeSide === "from") {
-      setFromAsset(token);
-    } else {
-      setToAsset(token);
-    }
+  const handleSelectToken = (tk) => {
+    activeSide === "from" ? setFromAsset(tk) : setToAsset(tk);
   };
 
-  // ---------------------------------------------
-  // Swap Handler with asset and balance checks
-  // ---------------------------------------------
   const handleSwap = async () => {
-    // Pre-swap check: is the selected fromAsset among available tokens?
+    console.log("handleSwap started:", {
+      fromAsset,
+      toAsset,
+      sendAmount,
+      slippageTolerance,
+    });
+
+    // ── 1) Pre‑flight checks ─────────────────────────────────────────────────────
     if (!availableTokens.includes(fromAsset)) {
-      setTxStatus(`Error: Asset ${fromAsset} is not available.`);
+      const msg = `Error: Asset ${fromAsset} not available.`;
+      console.error(msg);
+      setTxStatus(msg);
       setTransactionStatus("error");
-      setTransactionMessage(
-        `Asset ${fromAsset} is not available in your liquidity pool or wallet.`
-      );
       return;
     }
-    // Pre-swap check: does the user have sufficient balance for the 'from' asset?
     if (!checkSufficientBalance(fromAsset, sendAmount)) {
-      setTxStatus(`Error: Insufficient balance for ${fromAsset}.`);
+      const msg = `Error: Insufficient ${fromAsset}.`;
+      console.error(msg);
+      setTxStatus(msg);
       setTransactionStatus("error");
-      setTransactionMessage(
-        `You do not have sufficient balance for ${fromAsset}.`
-      );
+      return;
+    }
+    const estUI = parseFloat(estimatedReceived);
+    if (isNaN(estUI) || estUI <= 0) {
+      const msg = "Error: Cannot compute estimated receive amount.";
+      console.error(msg);
+      setTxStatus(msg);
+      setTransactionStatus("error");
       return;
     }
 
+    // ── 2) UI state & optional trustline/fund ─────────────────────────────────
     setLoading(true);
-    setTxStatus("Starting swap...");
     setModalOpen(true);
     setTransactionStatus("pending");
-    setTransactionMessage("Processing strict send swap...");
+    setTransactionMessage("Preparing swap…");
 
     try {
-      // For TradeToken, establish trustline if needed.
-      if (fromAsset === "TradeToken" || toAsset === "TradeToken") {
-        setTransactionMessage("Establishing trustline for TradeToken...");
+      if (fromAsset || toAsset) {
+        setTransactionMessage("Establishing trustline…");
         await establishUserTrustline(
-          getAssetObject("TradeToken", dynamicIssuer),
+          getAssetObject(toAsset, dynamicIssuer, toAsset, fromAsset),
           walletPublicKey
         );
       }
 
-      setTransactionMessage("Funding wallet via Friendbot...");
+      setTransactionMessage("Funding via Friendbot…");
       await friendbotFund(walletPublicKey);
 
-      // Slippage tolerance
-      const slippageTolerance = 0.95;
-      const safeSendAmount =
-        sendAmount && parseFloat(sendAmount) > 0
-          ? parseFloat(sendAmount).toFixed(7)
-          : "1.0000000";
-      const safeEstRecv = estimatedReceived ? parseFloat(estimatedReceived) : 0;
-      const safeDestMin =
-        safeEstRecv > 0
-          ? (safeEstRecv * slippageTolerance).toFixed(7)
-          : "0.0100000";
+      // ── 3) Build send amount ────────────────────────────────────────────────
+      const sendAmtStr = parseFloat(sendAmount).toFixed(7);
 
+      // ── 4) Query Horizon’s strict‑send paths correctly ───────────────────────
+      setTransactionMessage("Querying on‑chain path…");
+      const pathResp = await server
+        .strictSendPaths(
+          getAssetObject(fromAsset, dynamicIssuer, toAsset, fromAsset), // sourceAsset
+          sendAmtStr, // sourceAmount
+          [getAssetObject(toAsset, dynamicIssuer, toAsset, fromAsset)] // destinationAssets
+        )
+        .limit(1) // ← only pull the best path
+        .call(); // execute the request
+
+      if (!pathResp.records.length) {
+        throw new Error("No available path for this swap");
+      }
+
+      const onChainEst = parseFloat(pathResp.records[0].destination_amount);
+      console.log("on‑chain quote:", onChainEst);
+
+      // ── 5) Apply slippage tolerance (percent) ───────────────────────────────
+      const slippageFactor = 1 - slippageTolerance / 100;
+      const rawDestMin = onChainEst * slippageFactor;
+      const destMinStr = rawDestMin.toFixed(7);
+
+      console.log({
+        sendAmtStr,
+        onChainEst,
+        slippageTolerance,
+        slippageFactor,
+        rawDestMin,
+        destMinStr,
+      });
+
+      // ── 6) Execute the swap with guaranteed‑correct destMin ─────────────────
+      setTransactionMessage("Executing swap…");
       const swapHash = await doStrictSendSwap(
         walletPublicKey,
         fromAsset,
         toAsset,
-        safeSendAmount,
-        safeDestMin,
+        sendAmtStr,
+        destMinStr,
         dynamicIssuer
       );
-      const finalHash = swapHash || "N/A";
 
-      setTxStatus(`Transaction successful! Hash: ${finalHash}`);
+      console.log("Swap hash returned:", swapHash);
+      setTxStatus(`Success! Hash: ${swapHash || "N/A"}`);
       setTransactionStatus("success");
-      setTransactionMessage("Swap completed successfully!");
-      setTransactionHash(finalHash);
+      setTransactionMessage("Swap completed.");
+      setTransactionHash(swapHash || "");
 
-      const transactionData = {
-        txHash: finalHash,
+      // ── 7) Record history ─────────────────────────────────────────────────
+      await updateTransactionHistory({
+        txHash: swapHash,
         fromAsset,
         toAsset,
         sendAmount,
-        estimatedReceived,
+        estimatedReceived: onChainEst.toFixed(4),
         timestamp: new Date().toISOString(),
-      };
-      await updateTransactionHistory(transactionData);
-    } catch (error) {
-      // If error message contains "Unknown asset", replace with a custom error message.
-      let errorMsg = error.message;
-      if (errorMsg.includes("Unknown asset")) {
-        errorMsg = `Error: You do not have this asset (${fromAsset}) in your wallet.`;
-      }
-      setTxStatus(errorMsg);
+      });
+    } catch (err) {
+      console.error("Swap error:", err);
+      const msg = err.message.includes("Unknown asset")
+        ? `Error: Asset ${fromAsset} not in wallet.`
+        : err.message;
+      setTxStatus(msg);
       setTransactionStatus("error");
-      setTransactionMessage(errorMsg);
-      console.error("Swap error:", error);
+      setTransactionMessage(msg);
     } finally {
       setLoading(false);
     }
   };
 
-  // ---------------------------------------------
-  // Render UI: Keep the same UI as before
-  // ---------------------------------------------
   return (
     <Box sx={{ bgcolor: "#000", minHeight: "100vh" }}>
       <Card
         sx={{
-          width: isMobile ? "100%" : "500px",
-          backgroundColor: "rgba(0, 206, 229, 0.1)",
-          margin: "2rem auto",
-          borderRadius: "16px",
-          border: "1px solid rgb(77, 77, 77)",
-          padding: "2rem",
-          color: "#FFFFFF",
-          boxShadow: "0 4px 20px rgba(0, 0, 0, 0.3)",
+          width: isMobile ? "100%" : 500,
+          bgcolor: "rgba(0,206,229,0.1)",
+          mx: "auto",
+          my: 4,
+          borderRadius: 2,
+          border: "1px solid #4d4d4d",
+          p: 3,
           position: "relative",
-          overflow: "hidden",
         }}
       >
+        {/* Slippage Control at top-right */}
+        <Box
+          sx={{
+            position: "absolute",
+            top: 16,
+            right: 16,
+            display: "flex",
+            alignItems: "center",
+            gap: 1,
+          }}
+        >
+          <Tooltip title="Your transaction will revert if price moves beyond this slippage">
+            <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
+              <Typography sx={{ color: "white", fontWeight: 500 }}>
+                Max slippage
+              </Typography>
+              <IconButton size="small" sx={{ color: "white", p: 0.5 }}>
+                <MdInfoOutline />
+              </IconButton>
+            </Box>
+          </Tooltip>
+
+          <Button
+            size="small"
+            variant="contained"
+            onClick={handleSlippageClick}
+            sx={{
+              bgcolor: "rgba(255,255,255,0.1)",
+              color: "#FFF",
+              textTransform: "none",
+              borderRadius: "19px",
+              "&:hover": { bgcolor: "rgba(255,255,255,0.2)" },
+              px: 1.5,
+            }}
+          >
+            Auto
+          </Button>
+
+          <Typography sx={{ color: "#FFF", fontWeight: 500 }}>
+            {slippageTolerance.toFixed(2)}%
+          </Typography>
+        </Box>
+
         <CardContent>
-          {/* PAY (from) */}
-          <Typography variant="subtitle2" sx={{ mb: 1 }}>
+          <Typography variant="subtitle2" mb={1}>
             Pay
           </Typography>
           <Box
             sx={{
-              backgroundColor: "rgba(255,255,255,0.05)",
-              borderRadius: 2,
+              bgcolor: "rgba(255,255,255,0.05)",
+              borderRadius: 1,
               p: 2,
               mb: 3,
               display: "flex",
@@ -696,30 +754,31 @@ export default function SwapPage() {
               }
               InputProps={{
                 disableUnderline: true,
-                style: { fontSize: "1.25rem", color: "#fff", width: "100px" },
+                sx: { fontSize: "1.25rem", color: "#fff", width: 100 },
               }}
-              sx={{ mr: 2 }}
             />
             <Box
               onClick={() => openSelectTokenModal("from")}
               sx={{
-                backgroundColor: "#142c41",
-                borderRadius: 2,
+                bgcolor: "#142c41",
+                borderRadius: 1,
                 px: 2,
                 py: 1,
                 cursor: "pointer",
-                userSelect: "none",
                 display: "flex",
                 alignItems: "center",
               }}
             >
-              <Typography sx={{ fontWeight: "bold", mr: 1 }}>
+              <Typography fontWeight="bold" mr={1}>
                 {fromAsset}
               </Typography>
-              <img
-                src="data:image/svg+xml,%3Csvg width='12' height='12' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M3 4l3 3 3-3' fill='%23fff'/%3E%3C/svg%3E"
-                alt="down arrow"
-                style={{ width: 12, height: 12 }}
+              <Box
+                component="svg"
+                width={12}
+                height={12}
+                dangerouslySetInnerHTML={{
+                  __html: "<path d='M3 4l3 3 3-3' fill='%23fff' />",
+                }}
               />
             </Box>
           </Box>
@@ -727,25 +786,23 @@ export default function SwapPage() {
           <Box
             sx={{
               position: "absolute",
-              top: "38%",
-              left: "45%",
-              transform: "translate(-50%, -50%)",
-              zIndex: 1000,
-              cursor: "pointer",
+              top: "42%",
+              left: "50%",
+              transform: "translate(-50%,-50%)",
             }}
           >
-            <IconButton onClick={() => {}}>
-              <img src={swap} style={{ height: "2.5rem" }} alt="Swap" />
+            <IconButton>
+              <img src={swap} alt="swap" style={{ height: 40 }} />
             </IconButton>
           </Box>
-          {/* RECEIVE (to) */}
-          <Typography variant="subtitle2" sx={{ mb: 1 }}>
+
+          <Typography variant="subtitle2" mb={1}>
             Receive
           </Typography>
           <Box
             sx={{
-              backgroundColor: "rgba(255,255,255,0.05)",
-              borderRadius: 2,
+              bgcolor: "rgba(255,255,255,0.05)",
+              borderRadius: 1,
               p: 2,
               mb: 3,
               display: "flex",
@@ -760,41 +817,40 @@ export default function SwapPage() {
               InputProps={{
                 readOnly: true,
                 disableUnderline: true,
-                style: { fontSize: "1.25rem", color: "#fff", width: "100px" },
+                sx: { fontSize: "1.25rem", color: "#fff", width: 100 },
               }}
-              sx={{ mr: 2 }}
             />
             <Box
               onClick={() => openSelectTokenModal("to")}
               sx={{
-                backgroundColor: "#142c41",
-                borderRadius: 2,
+                bgcolor: "#142c41",
+                borderRadius: 1,
                 px: 2,
                 py: 1,
                 cursor: "pointer",
-                userSelect: "none",
                 display: "flex",
                 alignItems: "center",
               }}
             >
-              <Typography sx={{ fontWeight: "bold", mr: 1 }}>
+              <Typography fontWeight="bold" mr={1}>
                 {toAsset}
               </Typography>
-              <img
-                src="data:image/svg+xml,%3Csvg width='12' height='12' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M3 4l3 3 3-3' fill='%23fff'/%3E%3C/svg%3E"
-                alt="down arrow"
-                style={{ width: 12, height: 12 }}
+              <Box
+                component="svg"
+                width={12}
+                height={12}
+                dangerouslySetInnerHTML={{
+                  __html: "<path d='M3 4l3 3 3-3' fill='%23fff' />",
+                }}
               />
             </Box>
           </Box>
 
-          {/* Ratio Display */}
-          <Typography variant="body2" sx={{ mb: 3, color: "#ccc" }}>
+          <Typography variant="body2" color="#ccc" mb={3}>
             1 {fromAsset} = {ratioValue} {toAsset}
           </Typography>
 
-          {/* Swap Button */}
-          <Box sx={{ textAlign: "center" }}>
+          <Box textAlign="center">
             <CustomButton
               variant="contained"
               onClick={handleSwap}
@@ -804,21 +860,17 @@ export default function SwapPage() {
             </CustomButton>
           </Box>
 
-          {/* Transaction Status */}
-
           {txStatus && (
             <Typography
-              sx={{
-                display: "block",
-                textAlign: "center",
-                mt: 2,
-                color:
-                  transactionStatus === "success"
-                    ? "success.main"
-                    : transactionStatus === "error"
-                    ? "error.main"
-                    : "#fff",
-              }}
+              mt={2}
+              textAlign="center"
+              color={
+                transactionStatus === "success"
+                  ? "success.main"
+                  : transactionStatus === "error"
+                  ? "error.main"
+                  : "#fff"
+              }
             >
               {txStatus}
             </Typography>
@@ -826,7 +878,6 @@ export default function SwapPage() {
         </CardContent>
       </Card>
 
-      {/* Transaction Modal */}
       <TransactionModal
         open={modalOpen}
         onClose={() => setModalOpen(false)}
@@ -835,13 +886,39 @@ export default function SwapPage() {
         transactionHash={transactionHash}
       />
 
-      {/* Token Selection Modal */}
       <TokenSelectModal
         open={selectTokenModalOpen}
         onClose={() => setSelectTokenModalOpen(false)}
         tokens={availableTokens}
         onSelectToken={handleSelectToken}
       />
+
+      {/* Slippage Popover */}
+      <Popover
+        open={slippageOpen}
+        anchorEl={slippageAnchorEl}
+        onClose={handleSlippageClose}
+        anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+        transformOrigin={{ vertical: "top", horizontal: "right" }}
+      >
+        <Box sx={{ p: 2, width: 200 }}>
+          <Typography variant="subtitle2" gutterBottom>
+            Max slippage
+          </Typography>
+          <TextField
+            fullWidth
+            size="small"
+            type="number"
+            value={slippageTolerance}
+            onChange={(e) =>
+              setSlippageTolerance(Math.max(0, parseFloat(e.target.value)))
+            }
+            InputProps={{
+              endAdornment: <InputAdornment position="end">%</InputAdornment>,
+            }}
+          />
+        </Box>
+      </Popover>
     </Box>
   );
 }

@@ -9,6 +9,8 @@ import CreatePool from "./components/CreatePool";
 import Home from "./components/Home";
 import PoolList from "./components/ViewPools";
 import DiamanteDashboard from "./components/DiamanteDashboard";
+import ViewPosition from "./components/ViewPools/ViewPositions";
+import TokensPage from "./components/Tokens/TokensPage";
 
 const App = () => {
   const [activeTab, setActiveTab] = useState("Swap");
@@ -46,9 +48,11 @@ const App = () => {
 
         <Route path="/profile" element={<DiamanteDashboard />} />
 
-        <Route path="/staking" element={<Staking />} />
+        <Route path="/tokens" element={<TokensPage />} />
         <Route path="/pools/create" element={<CreatePool />} />
         <Route path="/pools/view" element={<PoolList />} />
+        <Route path="/pools/view-position" element={<ViewPosition />} />
+
       </Routes>
     </>
   );

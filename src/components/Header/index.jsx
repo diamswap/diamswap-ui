@@ -31,7 +31,7 @@ const Navbar = () => {
     trade: false,
     pools: false,
   });
-  
+
   // Get wallet public key from localStorage (wallet is connected if a key exists)
   const walletPublicKey = localStorage.getItem("diamPublicKey");
 
@@ -71,13 +71,18 @@ const Navbar = () => {
     ],
     pools: [
       { label: "Create Pool", path: "/pools/create" },
-      { label: "View Pool", path: "/pools/view" },
+      { label: "View Positions", path: "/pools/view-position" },
+      { label: "View All Pools", path: "/pools/view" },
     ],
   };
 
   // For mobile drawer menu
   const drawerList = (
-    <Box sx={{ width: 250 }} role="presentation" onKeyDown={toggleDrawer(false)}>
+    <Box
+      sx={{ width: 250 }}
+      role="presentation"
+      onKeyDown={toggleDrawer(false)}
+    >
       <List>
         {/* Trade Menu */}
         <ListItem button onClick={() => handleSubMenuToggle("trade")}>
@@ -138,8 +143,8 @@ const Navbar = () => {
         </Collapse>
 
         {/* Staking Menu */}
-        <ListItem button component={NavLink} to="/staking">
-          <ListItemText primary="Staking" />
+        <ListItem button component={NavLink} to="/tokens">
+          <ListItemText primary="Tokens" />
         </ListItem>
         {/* Profile: Render in drawer only if wallet is connected */}
         {walletPublicKey && (
@@ -247,10 +252,10 @@ const Navbar = () => {
             ))}
             <Button
               component={NavLink}
-              to="/staking"
+              to="/tokens"
               sx={{ color: "#fff", textTransform: "none" }}
             >
-              Staking
+             Tokens
             </Button>
           </Box>
         </Box>
@@ -268,13 +273,21 @@ const Navbar = () => {
             </Button>
           )}
           <Box sx={{ display: { xs: "flex", md: "none" } }}>
-            <IconButton edge="start" color="inherit" onClick={toggleDrawer(true)}>
+            <IconButton
+              edge="start"
+              color="inherit"
+              onClick={toggleDrawer(true)}
+            >
               <FaBars style={{ color: "#D5FAFE" }} />
             </IconButton>
           </Box>
         </Box>
 
-        <Drawer anchor="right" open={isDrawerOpen} onClose={toggleDrawer(false)}>
+        <Drawer
+          anchor="right"
+          open={isDrawerOpen}
+          onClose={toggleDrawer(false)}
+        >
           {drawerList}
         </Drawer>
       </Toolbar>

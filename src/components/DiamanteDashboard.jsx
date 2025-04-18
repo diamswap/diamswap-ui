@@ -1,3 +1,4 @@
+// src/components/DiamanteDashboard.jsx
 import React, { useState, useEffect, useMemo } from "react";
 import {
   Box,
@@ -6,7 +7,6 @@ import {
   Typography,
   CircularProgress,
   Divider,
-  List,
   Card,
   CardContent,
   Tabs,
@@ -15,11 +15,12 @@ import {
   Grid,
   Collapse,
   IconButton,
-  TableCell,
-  TableRow,
   Table,
   TableHead,
   TableBody,
+  TableRow,
+  TableCell,
+  TablePagination,
 } from "@mui/material";
 import { Aurora } from "diamnet-sdk";
 import { FiChevronDown, FiChevronUp } from "react-icons/fi";
@@ -53,130 +54,124 @@ export default function DiamanteDashboard() {
   const [claimableBalances, setClaimableBalances] = useState([]);
   const [transactions, setTransactions] = useState([]);
   const [operations, setOperations] = useState([]);
+  const [offers, setOffers] = useState([]);
   const [selectedTab, setSelectedTab] = useState(0);
   const [showFullAccountData, setShowFullAccountData] = useState(false);
-
-  // NEW: We'll store all "ops per transaction" in a dictionary, keyed by tx.id
   const [txOps, setTxOps] = useState({});
+  const [txPage, setTxPage] = useState(0);
+  const [opPage, setOpPage] = useState(0);
+  const [sellPage, setSellPage] = useState(0);
+  const rowsPerPage = 10;
 
   const server = useMemo(
     () => new Aurora.Server("https://diamtestnet.diamcircle.io/"),
     []
   );
 
-  // Helper function to truncate a hash string: first 4 and last 4 characters.
-  const truncateHash = (hash) => {
-    if (!hash || hash.length < 8) return hash;
-    return `${hash.substring(0, 10)}...${hash.substring(hash.length - 8)}`;
-  };
+  const truncateHash = (h) =>
+    h && h.length > 8 ? `${h.slice(0, 5)}...${h.slice(-8)}` : h;
 
+  // 1) Load primary data
   useEffect(() => {
-    const fetchData = async () => {
+    async function fetchData() {
       try {
         setLoading(true);
+        const acct = await server.accounts().accountId(accountId).call();
+        setAccountData(acct);
 
-        // 1. Account Info
-        const account = await server.accounts().accountId(accountId).call();
-        setAccountData(account);
-
-        // 2. Claimable Balances
-        const cbResponse = await server
+        const cb = await server
           .claimableBalances()
           .claimant(accountId)
           .call();
-        setClaimableBalances(cbResponse.records);
+        setClaimableBalances(cb.records);
 
-        // 3. Transactions
-        const txResponse = await server
+        const tx = await server
           .transactions()
           .forAccount(accountId)
+          .limit(200)
+          .order("desc")
           .call();
-        setTransactions(txResponse.records);
+        setTransactions(tx.records);
 
-        // 4. Operations
-        const opResponse = await server
+        const op = await server
           .operations()
           .forAccount(accountId)
+          .limit(200)
+          .order("desc")
           .call();
-        setOperations(opResponse.records);
-      } catch (err) {
-        console.error("Error fetching dashboard data:", err);
+        setOperations(op.records);
+
+        const of = await server.offers().forAccount(accountId).call();
+        setOffers(of.records);
+      } catch (e) {
+        console.error(e);
       } finally {
         setLoading(false);
       }
-    };
-
-    if (accountId) {
-      fetchData();
     }
+    if (accountId) fetchData();
   }, [accountId, server]);
 
-  // ❗️ NEW: When transactions change, fetch operations for each transaction so we can see "Type/To/Amount"
+  // 2) Fetch per‐tx ops only on Transactions tab
   useEffect(() => {
-    async function loadTxOps() {
-      if (!transactions || transactions.length === 0) return;
-      for (const tx of transactions) {
-        try {
-          // For each transaction, fetch its operations
-          const opsResp = await server
-            .operations()
-            .forTransaction(tx.hash)
-            .call();
-          setTxOps((prev) => ({ ...prev, [tx.id]: opsResp.records }));
-        } catch (error) {
-          console.error("Error fetching ops for tx:", tx.hash, error);
-        }
+    if (selectedTab !== 2) return;
+    const start = txPage * rowsPerPage;
+    const pageTxs = transactions.slice(start, start + rowsPerPage);
+    pageTxs.forEach(async (tx) => {
+      if (txOps[tx.id]) return;
+      try {
+        const resp = await server.operations().forTransaction(tx.hash).call();
+        setTxOps((p) => ({ ...p, [tx.id]: resp.records }));
+      } catch (e) {
+        console.error(e);
       }
-    }
-    loadTxOps();
-  }, [transactions, server]);
+    });
+  }, [selectedTab, txPage, transactions, server, txOps]);
 
-  const handleTabChange = (event, newValue) => {
-    setSelectedTab(newValue);
-  };
+  const handleTabChange = (_, v) => setSelectedTab(v);
+  const toggleAccountDetails = () =>
+    setShowFullAccountData((p) => !p);
+  const handleTxPageChange = (_, p) => setTxPage(p);
+  const handleOpPageChange = (_, p) => setOpPage(p);
+  const handleSellPageChange = (_, p) => setSellPage(p);
 
-  const toggleAccountDetails = () => {
-    setShowFullAccountData(!showFullAccountData);
-  };
+  const getNativeBalance = () =>
+    accountData?.balances.find((b) => b.asset_type === "native")?.balance ||
+    "0";
+  const getAccountSeq = () => accountData?.sequence || "N/A";
 
-  const getNativeBalance = () => {
-    if (accountData && accountData.balances) {
-      const native = accountData.balances.find(
-        (bal) => bal.asset_type === "native"
-      );
-      return native ? native.balance : "0";
-    }
-    return "N/A";
-  };
+  const sellOffers = useMemo(
+    () => offers.filter((o) => o.selling.asset_type === "native"),
+    [offers]
+  );
 
-  const getAccountSequence = () => {
-    return accountData?.sequence || "N/A";
-  };
+  const pagedTxs = transactions.slice(
+    txPage * rowsPerPage,
+    txPage * rowsPerPage + rowsPerPage
+  );
+  const pagedOps = operations.slice(
+    opPage * rowsPerPage,
+    opPage * rowsPerPage + rowsPerPage
+  );
+  const pagedSell = sellOffers.slice(
+    sellPage * rowsPerPage,
+    sellPage * rowsPerPage + rowsPerPage
+  );
 
-  if (loading) {
+  if (loading)
     return (
       <Box sx={{ display: "flex", justifyContent: "center", mt: 4 }}>
-        <CircularProgress
-          sx={{
-            color: "rgba(15, 186, 209, 0.7)",
-          }}
-        />
+        <CircularProgress sx={{ color: "rgba(15,186,209,0.7)" }} />
       </Box>
     );
-  }
 
   return (
     <Container maxWidth="lg" sx={{ mt: 4, pb: 4 }}>
       <Paper
         elevation={4}
-        sx={{
-          backgroundColor: "transparent",
-          color: "#fff",
-          p: 3,
-          borderRadius: 2,
-        }}
+        sx={{ backgroundColor: "transparent", color: "#fff", p: 3, borderRadius: 2 }}
       >
-        {/* Account Info Card */}
+        {/* — Account Card — */}
         <Card
           sx={{
             backgroundColor: "transparent",
@@ -189,7 +184,7 @@ export default function DiamanteDashboard() {
             <Grid container spacing={2} alignItems="center">
               <Grid item>
                 <Avatar sx={{ width: 64, height: 64, bgcolor: "#333" }}>
-                  {accountId?.charAt(0) || "?"}
+                  {accountId?.[0] ?? "?"}
                 </Avatar>
               </Grid>
               <Grid item xs>
@@ -203,7 +198,7 @@ export default function DiamanteDashboard() {
                   <strong>Native Balance:</strong> {getNativeBalance()} DIAM
                 </Typography>
                 <Typography variant="body2">
-                  <strong>Sequence:</strong> {getAccountSequence()}
+                  <strong>Sequence:</strong> {getAccountSeq()}
                 </Typography>
                 <Typography
                   component="a"
@@ -221,10 +216,7 @@ export default function DiamanteDashboard() {
                 </Typography>
               </Grid>
               <Grid item>
-                <IconButton
-                  onClick={toggleAccountDetails}
-                  sx={{ color: "#fff" }}
-                >
+                <IconButton onClick={toggleAccountDetails} sx={{ color: "#fff" }}>
                   {showFullAccountData ? <FiChevronUp /> : <FiChevronDown />}
                 </IconButton>
               </Grid>
@@ -258,7 +250,7 @@ export default function DiamanteDashboard() {
 
         <Divider sx={{ mb: 2, borderColor: "#444" }} />
 
-        {/* Tabs */}
+        {/* — Tabs — */}
         <Tabs
           value={selectedTab}
           onChange={handleTabChange}
@@ -272,9 +264,10 @@ export default function DiamanteDashboard() {
           <Tab label="Claimable Balances" />
           <Tab label="Transactions" />
           <Tab label="Operations" />
+          <Tab label="Sell Offers" />
         </Tabs>
 
-        {/* Tab Panels */}
+        {/* Account Info */}
         <TabPanel value={selectedTab} index={0}>
           <Card
             sx={{
@@ -303,161 +296,111 @@ export default function DiamanteDashboard() {
           </Card>
         </TabPanel>
 
+        {/* Claimable Balances */}
         <TabPanel value={selectedTab} index={1}>
           <Typography variant="h6" gutterBottom>
             Claimable Balances
           </Typography>
-          {claimableBalances.length > 0 ? (
-            <Box
-              sx={{ mt: 1, display: "flex", flexDirection: "column", gap: 2 }}
-            >
-              {claimableBalances.map((balance) => (
-                <Card
-                  key={balance.id}
-                  sx={{
-                    backgroundColor: "transparent",
-                    borderRadius: 2,
-                    border: "1px solid #333",
-                  }}
-                >
-                  <CardContent>
-                    <Typography variant="body1" sx={{ fontWeight: 600 }}>
-                      Balance ID: {balance.id}
-                    </Typography>
-                    <Typography variant="body2" sx={{ mt: 0.5 }}>
-                      Amount: {balance.amount} | Asset:{" "}
-                      {balance.asset_code || "native"}
-                    </Typography>
-                  </CardContent>
-                </Card>
-              ))}
-            </Box>
+          {claimableBalances.length ? (
+            claimableBalances.map((bal, i) => (
+              <Card
+                key={bal.id}
+                sx={{
+                  backgroundColor: "transparent",
+                  borderRadius: 2,
+                  border: "1px solid #333",
+                  mb: 1,
+                }}
+              >
+                <CardContent>
+                  <Typography variant="body1" sx={{ fontWeight: 600 }}>
+                    {i + 1}. Balance ID: {bal.id}
+                  </Typography>
+                  <Typography variant="body2">
+                    Amount: {bal.amount} | Asset: {bal.asset_code || "native"}
+                  </Typography>
+                </CardContent>
+              </Card>
+            ))
           ) : (
             <Typography>No claimable balances found.</Typography>
           )}
         </TabPanel>
 
-        {/* TRANSACTIONS TAB UPDATED */}
+        {/* Transactions */}
         <TabPanel value={selectedTab} index={2}>
           <Typography variant="h6" gutterBottom>
             Transactions
           </Typography>
-
-          <TabPanel value={selectedTab} index={2}>
-            {transactions.length === 0 ? (
-              <Typography>No transactions found.</Typography>
-            ) : (
-              // Create a table with columns: From, Hash, Type, To, Amount
-              <Table sx={{ mt: 1, border: "1px solid #333" }}>
+          {transactions.length === 0 ? (
+            <Typography>No transactions found.</Typography>
+          ) : (
+            <>
+              <Table sx={{ border: "1px solid #333" }}>
                 <TableHead>
                   <TableRow>
+                    <TableCell sx={{ color: "#fff" }}>#</TableCell>
                     <TableCell sx={{ color: "#fff" }}>From</TableCell>
                     <TableCell sx={{ color: "#fff" }}>Hash</TableCell>
                     <TableCell sx={{ color: "#fff" }}>Type</TableCell>
-                    <TableCell sx={{ color: "#fff" }}>To</TableCell>
                     <TableCell sx={{ color: "#fff" }}>Amount</TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {transactions.map((tx) => {
-                    const opsForThisTx = txOps[tx.id] || [];
-
-                    // If no operations, show a single row.
-                    if (opsForThisTx.length === 0) {
+                  {pagedTxs.flatMap((tx, idx) => {
+                    const globalIndex = txPage * rowsPerPage + idx + 1;
+                    const ops = txOps[tx.id] || [];
+                    if (!ops.length) {
                       return (
                         <TableRow key={tx.id}>
-                          {/* FROM */}
+                          <TableCell sx={{ color: "#fff" }}>{globalIndex}</TableCell>
                           <TableCell sx={{ color: "#fff" }}>
                             {tx.source_account}
                           </TableCell>
-
-                          {/* HASH */}
                           <TableCell sx={{ color: "#fff" }}>
-                            <Typography
-                              component="a"
+                            <a
                               href={`https://testnetexplorer.diamante.io/about-tx-hash/${tx.hash}`}
                               target="_blank"
                               rel="noopener noreferrer"
-                              sx={{
+                              style={{
                                 ...gradientText,
                                 textDecoration: "underline",
                               }}
                             >
                               {truncateHash(tx.hash)}
-                            </Typography>
+                            </a>
                           </TableCell>
-
-                          {/* TYPE / TO / AMOUNT */}
-                          <TableCell sx={{ color: "#fff" }} colSpan={3}>
+                          <TableCell sx={{ color: "#fff" }} colSpan={2}>
                             No operations found
                           </TableCell>
                         </TableRow>
                       );
                     }
-
-                    // Otherwise, create one table row per operation in this transaction.
-                    return opsForThisTx.map((op) => {
-                      const { type, id: opId } = op;
-                      let from = tx.source_account;
-                      let to = "";
-                      let amount = "";
-
-                      switch (op.type) {
-                        case "create_account":
-                          to = op.account;
-                          amount = op.starting_balance;
-                          break;
-                        case "payment":
-                          to = op.to;
-                          amount = op.amount;
-                          break;
-                        case "manage_sell_offer":
-                          to = "Orderbook";
-                          amount = op.amount || "N/A";
-                          break;
-                        case "change_trust":
-                          to = "-";
-                          amount = "N/A";
-                          break;
-                        default:
-                          to = "-";
-                          amount = "N/A";
-                          break;
-                      }
-
+                    return ops.map((op) => {
+                      let amount = "N/A";
+                      if (op.type === "create_account") amount = op.starting_balance;
+                      if (op.type === "payment") amount = op.amount;
+                      if (op.type === "manage_sell_offer") amount = op.amount || "N/A";
                       return (
-                        <TableRow key={opId}>
-                          {/* FROM */}
+                        <TableRow key={op.id} hover>
+                          <TableCell sx={{ color: "#fff" }}>{globalIndex}</TableCell>
                           <TableCell sx={{ color: "#fff" }}>
-                            {" "}
-                            {truncateHash(from)}
+                            {truncateHash(tx.source_account)}
                           </TableCell>
-
-                          {/* HASH */}
                           <TableCell sx={{ color: "#fff" }}>
-                            <Typography
-                              component="a"
+                            <a
                               href={`https://testnetexplorer.diamante.io/about-tx-hash/${tx.hash}`}
                               target="_blank"
                               rel="noopener noreferrer"
-                              sx={{
+                              style={{
                                 ...gradientText,
                                 textDecoration: "underline",
                               }}
                             >
                               {truncateHash(tx.hash)}
-                            </Typography>
+                            </a>
                           </TableCell>
-
-                          {/* TYPE */}
-                          <TableCell sx={{ color: "#fff" }}>{type}</TableCell>
-
-                          {/* TO */}
-                          <TableCell sx={{ color: "#fff" }}>
-                            {truncateHash(to)}
-                          </TableCell>
-
-                          {/* AMOUNT */}
+                          <TableCell sx={{ color: "#fff" }}>{op.type}</TableCell>
                           <TableCell sx={{ color: "#fff" }}>{amount}</TableCell>
                         </TableRow>
                       );
@@ -465,40 +408,132 @@ export default function DiamanteDashboard() {
                   })}
                 </TableBody>
               </Table>
-            )}
-          </TabPanel>
+              <TablePagination
+                component="div"
+                count={transactions.length}
+                page={txPage}
+                onPageChange={handleTxPageChange}
+                rowsPerPage={rowsPerPage}
+                rowsPerPageOptions={[]}
+                sx={{ color: "#fff", mt: 1 }}
+              />
+            </>
+          )}
         </TabPanel>
 
+        {/* Operations */}
         <TabPanel value={selectedTab} index={3}>
           <Typography variant="h6" gutterBottom>
             Operations
           </Typography>
-          {operations.length > 0 ? (
-            <Box
-              sx={{ mt: 1, display: "flex", flexDirection: "column", gap: 2 }}
-            >
-              {operations.map((op) => (
-                <Card
-                  key={op.id}
-                  sx={{
-                    backgroundColor: "transparent",
-                    borderRadius: 2,
-                    border: "1px solid #333",
-                  }}
-                >
-                  <CardContent>
-                    <Typography variant="body1" sx={{ fontWeight: 600 }}>
-                      Type: {op.type}
-                    </Typography>
-                    <Typography variant="body2" sx={{ mt: 0.5 }}>
-                      ID: {op.id} | Created: {op.created_at}
-                    </Typography>
-                  </CardContent>
-                </Card>
-              ))}
-            </Box>
+          {operations.length ? (
+            <>
+              <Table sx={{ border: "1px solid #333" }}>
+                <TableHead>
+                  <TableRow>
+                    <TableCell sx={{ color: "#fff", fontWeight: "bold" }}>#</TableCell>
+                    <TableCell sx={{ color: "#fff", fontWeight: "bold" }}>Type</TableCell>
+                    <TableCell sx={{ color: "#fff", fontWeight: "bold" }}>ID</TableCell>
+                    <TableCell sx={{ color: "#fff", fontWeight: "bold" }}>Created</TableCell>
+                    <TableCell sx={{ color: "#fff", fontWeight: "bold" }}>Transaction</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {pagedOps.map((op, idx) => {
+                    const globalIndex = opPage * rowsPerPage + idx + 1;
+                    return (
+                      <TableRow key={op.id} hover>
+                        <TableCell sx={{ color: "#fff" }}>{globalIndex}</TableCell>
+                        <TableCell sx={{ color: "#fff" }}>{op.type}</TableCell>
+                        <TableCell sx={{ color: "#fff" }}>{op.id}</TableCell>
+                        <TableCell sx={{ color: "#fff" }}>
+                          {new Date(op.created_at).toLocaleString()}
+                        </TableCell>
+                        <TableCell sx={{ color: "#fff" }}>
+                          {op.transaction_hash ? (
+                            <a
+                              href={`https://testnetexplorer.diamante.io/about-tx-hash/${op.transaction_hash}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              style={{
+                                ...gradientText,
+                                textDecoration: "underline",
+                              }}
+                            >
+                              {truncateHash(op.transaction_hash)}
+                            </a>
+                          ) : (
+                            "—"
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+              <TablePagination
+                component="div"
+                count={operations.length}
+                page={opPage}
+                onPageChange={handleOpPageChange}
+                rowsPerPage={rowsPerPage}
+                rowsPerPageOptions={[]}
+                sx={{ color: "#fff", mt: 1 }}
+              />
+            </>
           ) : (
             <Typography>No operations found.</Typography>
+          )}
+        </TabPanel>
+
+        {/* Sell Offers */}
+        <TabPanel value={selectedTab} index={4}>
+          <Typography variant="h6" gutterBottom>
+            Sell Offers (selling DIAM)
+          </Typography>
+          {sellOffers.length ? (
+            <>
+              <Table sx={{ border: "1px solid #333" }}>
+                <TableHead>
+                  <TableRow>
+                    <TableCell sx={{ color: "#fff", fontWeight: "bold" }}>#</TableCell>
+                    <TableCell sx={{ color: "#fff", fontWeight: "bold" }}>Offer ID</TableCell>
+                    <TableCell sx={{ color: "#fff", fontWeight: "bold" }}>Selling</TableCell>
+                    <TableCell sx={{ color: "#fff", fontWeight: "bold" }}>Buying</TableCell>
+                    <TableCell sx={{ color: "#fff", fontWeight: "bold" }}>Amount</TableCell>
+                    <TableCell sx={{ color: "#fff", fontWeight: "bold" }}>Price</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {pagedSell.map((o, idx) => {
+                    const globalIndex = sellPage * rowsPerPage + idx + 1;
+                    return (
+                      <TableRow key={o.id} hover>
+                        <TableCell sx={{ color: "#fff" }}>{globalIndex}</TableCell>
+                        <TableCell sx={{ color: "#fff" }}>{o.id}</TableCell>
+                        <TableCell sx={{ color: "#fff" }}>DIAM</TableCell>
+                        <TableCell sx={{ color: "#fff" }}>
+                          {o.buying.asset_code || "XLM"}
+                        </TableCell>
+                        <TableCell sx={{ color: "#fff" }}>{o.amount}</TableCell>
+                        <TableCell sx={{ color: "#fff" }}>{o.price}</TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+              <TablePagination
+                component="div"
+                count={sellOffers.length}
+                page={sellPage}
+                onPageChange={handleSellPageChange}
+                rowsPerPage={rowsPerPage}
+                rowsPerPageOptions={[]}
+                sx={{ color: "#fff", mt: 1 }}
+              />
+            </>
+          ) : (
+            <Typography>No sell offers found.</Typography>
           )}
         </TabPanel>
       </Paper>

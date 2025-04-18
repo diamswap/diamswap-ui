@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from "react";
+// src/components/BuyOfferPage.jsx
+import React, { useState, useEffect, useCallback } from "react";
 import {
   Asset,
   Aurora,
@@ -6,108 +7,211 @@ import {
   Operation,
   TransactionBuilder,
   BASE_FEE,
-  Networks,
 } from "diamnet-sdk";
-import { Container, Box, Typography, TextField, Button } from "@mui/material";
+import {
+  Container,
+  Box,
+  Typography,
+  TextField,
+  Autocomplete,
+  CircularProgress,
+  useTheme,
+  useMediaQuery,
+  Stack,
+  Alert,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableRow,
+  Link,
+  IconButton,
+} from "@mui/material";
+import { FaChevronDown, FaSyncAlt } from "react-icons/fa";
 import CustomButton from "../../comman/CustomButton";
 import TransactionModal from "../../comman/TransactionModal";
 
 const NETWORK_PASSPHRASE = "Diamante Testnet 2024";
 const issuerKeypair = Keypair.random();
-const assetCode = "TradeToken";
-const customAsset = new Asset(assetCode, issuerKeypair.publicKey());
-
-// DiamNet Aurora server
 const server = new Aurora.Server("https://diamtestnet.diamcircle.io/");
-// Friendbot for testnet
 const friendbotUrl = "https://friendbot.diamcircle.io?addr=";
 
+/* --------------------------------- */
+/* Helper = tiny open‑offers table    */
+/* --------------------------------- */
+const OpenOffers = ({ offers, onRefresh, loading }) => (
+  <Box sx={{ mt: 3 }}>
+    <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1 }}>
+      <Typography variant="subtitle1" sx={{ flexGrow: 1 }}>
+        Your open buy offers
+      </Typography>
+      <IconButton
+        size="small"
+        onClick={onRefresh}
+        disabled={loading}
+        title="Refresh offers"
+      >
+        <FaSyncAlt size={14} />
+      </IconButton>
+    </Stack>
+
+    {offers.length === 0 ? (
+      <Typography variant="body2" color="text.secondary">
+        None
+      </Typography>
+    ) : (
+      <Table size="small">
+        <TableHead>
+          <TableRow>
+            <TableCell sx={{ color: "#A0A0A0" }}>Price</TableCell>
+            <TableCell sx={{ color: "#A0A0A0" }}>
+              Amount&nbsp;(wanted)
+            </TableCell>
+            <TableCell sx={{ color: "#A0A0A0" }}>Filled</TableCell>
+          </TableRow>
+        </TableHead>
+        <TableBody>
+          {offers.map((o) => (
+            <TableRow key={o.id}>
+              <TableCell>
+                {o.price_r.n}/{o.price_r.d}
+              </TableCell>
+              <TableCell>{o.amount}</TableCell>
+              <TableCell>
+                {(parseFloat(o.original_amount) - parseFloat(o.amount)).toFixed(
+                  7
+                )}
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    )}
+  </Box>
+);
+
 const BuyOfferPage = () => {
-  // -------------------------------------------------------
-  // State
-  // -------------------------------------------------------
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down("sm"));
+
+  /* ---------------- state ---------------- */
+  const [assetCodes, setAssetCodes] = useState([]);
+  const [assetCode, setAssetCode] = useState("DIAM");
+  const [balances, setBalances] = useState({ native: "0", custom: "0" });
   const [buyAmount, setBuyAmount] = useState("");
   const [price, setPrice] = useState("");
   const [loading, setLoading] = useState(false);
-  const [txStatus, setTxStatus] = useState("");
 
-  // TransactionModal states
   const [modalOpen, setModalOpen] = useState(false);
-  const [transactionStatus, setTransactionStatus] = useState(""); // pending, success, error
+  const [transactionStatus, setTransactionStatus] = useState("");
   const [transactionMessage, setTransactionMessage] = useState("");
   const [transactionHash, setTransactionHash] = useState("");
 
-  // The user’s connected DIAM wallet from localStorage
-  const [walletPublicKey, setWalletPublicKey] = useState(
-    () => localStorage.getItem("diamPublicKey") || ""
-  );
+  const [offers, setOffers] = useState([]);
+  const [offersBusy, setOffersBusy] = useState(false);
 
-  // -------------------------------------------------------
-  // Input handlers
-  // -------------------------------------------------------
-  const handleBuyAmountChange = (e) =>
-    setBuyAmount(e.target.value.replace(/[^0-9.]/g, ""));
-  const handlePriceChange = (e) =>
-    setPrice(e.target.value.replace(/[^0-9.]/g, ""));
+  const walletPublicKey = localStorage.getItem("diamPublicKey") || "";
 
-  // -------------------------------------------------------
-  // Helper: friendbot-fund an account if needed
-  // -------------------------------------------------------
-  const friendbotFund = async (publicKey) => {
+  /* -------------- helpers --------------- */
+  const customAsset =
+    assetCode === "DIAM"
+      ? Asset.native()
+      : new Asset(assetCode, issuerKeypair.publicKey());
+
+  const refreshBalances = useCallback(async () => {
+    if (!walletPublicKey) return;
+
     try {
-      const resp = await fetch(`${friendbotUrl}${publicKey}`);
-      if (!resp.ok) {
-        if (resp.status === 400) {
-          const errorData = await resp.json();
-          if (
-            errorData?.detail &&
-            errorData.detail.includes("createAccountAlreadyExist")
-          ) {
-            console.log("Account already exists. Skipping friendbot...");
-            return;
-          } else {
-            throw new Error(
-              `Friendbot error: ${errorData.detail || resp.statusText}`
-            );
-          }
-        } else {
-          throw new Error(`Friendbot error: ${resp.statusText}`);
-        }
+      const account = await server.loadAccount(walletPublicKey);
+      const nativeBal =
+        account.balances.find((b) => b.asset_type === "native")?.balance || "0";
+
+      const customBal =
+        assetCode === "DIAM"
+          ? "0"
+          : account.balances.find((b) => b.asset_code === assetCode)?.balance ||
+            "0";
+
+      setBalances({ native: nativeBal, custom: customBal });
+    } catch (err) {
+      console.error("Error fetching balances:", err);
+    }
+  }, [walletPublicKey, assetCode]);
+
+  const refreshOffers = useCallback(async () => {
+    if (!walletPublicKey) return;
+    setOffersBusy(true);
+    try {
+      const res = await server
+        .offers()
+        .forAccount(walletPublicKey)
+        .limit(50)
+        .call();
+      setOffers(
+        res.records.filter(
+          (o) =>
+            o.buying.asset_code === assetCode &&
+            o.selling.asset_type === "native"
+        )
+      );
+    } catch (e) {
+      console.error("Error loading offers:", e);
+    } finally {
+      setOffersBusy(false);
+    }
+  }, [walletPublicKey, assetCode]);
+
+  /* --------------- effects -------------- */
+  useEffect(() => {
+    (async () => {
+      try {
+        const resp = await fetch(
+          "https://diamtestnet.diamcircle.io/liquidity_pools?limit=200"
+        );
+        const json = await resp.json();
+        const pools = json._embedded?.records || json.records || [];
+
+        const codes = Array.from(
+          new Set(
+            pools.flatMap((p) =>
+              p.reserves
+                .filter((rs) => rs.asset !== "native")
+                .map((rs) => rs.asset.split(":")[0])
+            )
+          )
+        );
+        setAssetCodes(["DIAM", ...codes]);
+      } catch (err) {
+        console.error("Error fetching asset codes:", err);
       }
-      console.log(`Friendbot funded account: ${publicKey}`);
-    } catch (error) {
-      console.error("Error friendbot funding:", error);
-      throw error;
+    })();
+  }, []);
+
+  useEffect(() => {
+    refreshBalances();
+    refreshOffers();
+  }, [refreshBalances, refreshOffers]);
+
+  /* ---------- friendbot utils ----------- */
+  const friendbotFund = async (pk) => {
+    const r = await fetch(`${friendbotUrl}${pk}`);
+    if (!r.ok) {
+      const err = await r.json();
+      if (r.status === 400 && err.detail?.includes("createAccountAlreadyExist"))
+        return;
+      throw new Error(err.detail || r.statusText);
     }
   };
 
-  // -------------------------------------------------------
-  // 1) Fund the ephemeral issuer (so it can create the asset)
-  // -------------------------------------------------------
-  const fundIssuerIfNeeded = async () => {
-    await friendbotFund(issuerKeypair.publicKey());
-  };
+  const fundIssuerIfNeeded = () => friendbotFund(issuerKeypair.publicKey());
+  const fundUserIfNeeded = () => friendbotFund(walletPublicKey);
 
-  // -------------------------------------------------------
-  // 2) Fund user’s wallet if needed
-  // -------------------------------------------------------
-  const fundUserIfNeeded = async () => {
-    if (!walletPublicKey) {
-      throw new Error("No DIAM wallet connected. Please connect your wallet first.");
-    }
-    await friendbotFund(walletPublicKey);
-  };
-
-  // -------------------------------------------------------
-  // 3) Have user trust "TradeToken"
-  // -------------------------------------------------------
+  /* ---------- trust‑line & issue -------- */
   const establishUserTrustline = async () => {
-    if (!walletPublicKey) {
-      throw new Error("No DIAM wallet connected. Please connect your wallet first.");
-    }
-    const userAccount = await server.loadAccount(walletPublicKey);
+    if (assetCode === "DIAM") return;
 
-    const trustTx = new TransactionBuilder(userAccount, {
+    const acct = await server.loadAccount(walletPublicKey);
+    const tx = new TransactionBuilder(acct, {
       fee: BASE_FEE,
       networkPassphrase: NETWORK_PASSPHRASE,
     })
@@ -120,23 +224,14 @@ const BuyOfferPage = () => {
       .setTimeout(30)
       .build();
 
-    console.log("TradeToken Trustline XDR:", trustTx.toXDR());
-
-    if (!window.diam || typeof window.diam.sign !== "function") {
-      throw new Error("DIAM Wallet extension not available for signing.");
-    }
-    const trustResult = await window.diam.sign(trustTx.toXDR(), true, NETWORK_PASSPHRASE);
-    console.log("Trustline sign response:", trustResult);
+    await window.diam.sign(tx.toXDR(), true, NETWORK_PASSPHRASE);
   };
 
-  // -------------------------------------------------------
-  // 4) Optionally: ephemeral issuer can send user some tokens
-  //    (not strictly required for a "buy" offer, but you might want it)
-  // -------------------------------------------------------
   const issueAssetToUser = async () => {
-    console.log("Issuing ephemeral asset to user...");
-    const issuerAccount = await server.loadAccount(issuerKeypair.publicKey());
-    const paymentTx = new TransactionBuilder(issuerAccount, {
+    if (assetCode === "DIAM") return;
+
+    const issuerAcct = await server.loadAccount(issuerKeypair.publicKey());
+    const tx = new TransactionBuilder(issuerAcct, {
       fee: BASE_FEE,
       networkPassphrase: NETWORK_PASSPHRASE,
     })
@@ -144,162 +239,128 @@ const BuyOfferPage = () => {
         Operation.payment({
           destination: walletPublicKey,
           asset: customAsset,
-          amount: "1000", // example
+          amount: "1000",
         })
       )
       .setTimeout(30)
       .build();
 
-    // ephemeral issuer signs locally
-    paymentTx.sign(issuerKeypair);
-
-    const payResult = await server.submitTransaction(paymentTx);
-    console.log("Issue ephemeral asset -> user result:", payResult.hash);
+    tx.sign(issuerKeypair);
+    await server.submitTransaction(tx);
   };
 
-  // -------------------------------------------------------
-  // 5) Create a Buy Offer (user sells DIAM, buys "TradeToken")
-  // -------------------------------------------------------
+  /* -------------- place offer ----------- */
   const createBuyOffer = async () => {
-    if (!buyAmount || !price) {
-      throw new Error("Buy amount/price is empty.");
-    }
-    if (!walletPublicKey) {
-      throw new Error("No DIAM wallet connected. Please connect your wallet first.");
-    }
+    if (!buyAmount || !price) throw new Error("Enter amount & price");
 
-    const userAccount = await server.loadAccount(walletPublicKey);
+    const acct = await server.loadAccount(walletPublicKey);
 
-    const offerTx = new TransactionBuilder(userAccount, {
+    const tx = new TransactionBuilder(acct, {
       fee: BASE_FEE,
       networkPassphrase: NETWORK_PASSPHRASE,
     })
       .addOperation(
         Operation.manageBuyOffer({
-          selling: Asset.native(),   // user sells DIAM
-          buying: customAsset,       // user buys ephemeral asset
-          buyAmount: buyAmount,
-          price: price,
+          selling: Asset.native(),
+          buying: customAsset,
+          buyAmount,
+          price,
           offerId: "0",
         })
       )
       .setTimeout(30)
       .build();
 
-    console.log("Buy Offer XDR:", offerTx.toXDR());
-
-    if (!window.diam || typeof window.diam.sign !== "function") {
-      throw new Error("DIAM Wallet extension not available for signing.");
-    }
-    const signResult = await window.diam.sign(offerTx.toXDR(), true, NETWORK_PASSPHRASE);
-    console.log("Buy Offer sign response:", signResult);
-
-    let finalHash = signResult.hash;
-    if (!finalHash && signResult.message?.data?.hash) {
-      finalHash = signResult.message.data.hash;
-      console.log("Extracted nested buy offer hash:", finalHash);
-    }
-    return finalHash || null;
+    const res = await window.diam.sign(tx.toXDR(), true, NETWORK_PASSPHRASE);
+    return res.hash || res.message?.data?.hash;
   };
 
-  // -------------------------------------------------------
-  // The single flow triggered by the "Submit Offer" button
-  // -------------------------------------------------------
+  /* -------------- full flow ------------- */
   const handleBuyFlow = async () => {
     setLoading(true);
-    setTxStatus("Starting buy offer flow...");
     setModalOpen(true);
     setTransactionStatus("pending");
-    setTransactionMessage("Processing buy offer...");
+    setTransactionMessage("Submitting…");
 
     try {
-      // 1) Fund ephemeral issuer if needed
-      setTransactionMessage("Funding ephemeral issuer...");
       await fundIssuerIfNeeded();
-
-      // 2) Fund user’s wallet if needed
-      setTransactionMessage("Funding user’s wallet...");
       await fundUserIfNeeded();
-
-      // 3) User trusts ephemeral asset
-      setTransactionMessage("Establishing user trustline...");
       await establishUserTrustline();
-
-      // 4) Optionally: ephemeral issuer sends user some tokens
-      // (Not strictly required for a buy offer, but included if you want user to hold them)
-      setTransactionMessage("Issuing ephemeral asset to user...");
       await issueAssetToUser();
+      const hash = await createBuyOffer();
 
-      // 5) Create Buy Offer
-      setTransactionMessage("Creating buy offer...");
-      const buyHash = await createBuyOffer();
-      console.log("Buy offer final hash:", buyHash);
-
-      setTxStatus(`Transaction successful! Hash: ${buyHash || "N/A"}`);
       setTransactionStatus("success");
-      setTransactionMessage("Buy offer created successfully!");
-      setTransactionHash(buyHash || "");
-    } catch (error) {
-      console.error("Buy offer flow error:", error);
-      setTxStatus(`Error: ${error.message || error}`);
+      setTransactionMessage("Offer submitted!");
+      setTransactionHash(hash);
+
+      await refreshBalances();
+      await refreshOffers();
+    } catch (err) {
       setTransactionStatus("error");
-      setTransactionMessage(`Error in buy offer flow: ${error.message || error}`);
+      setTransactionMessage(err.message);
     } finally {
       setLoading(false);
     }
   };
 
-  // -------------------------------------------------------
-  // Render
-  // -------------------------------------------------------
+  /* ================= UI ================= */
   return (
-    <Container maxWidth="sm" sx={{ marginTop: "40px" }}>
-  
-
+    <Container maxWidth="sm" sx={{ mt: 6 }}>
       <Box
         sx={{
-          backgroundColor: "rgba(0,206,229,0.06)",
-          margin: "2rem auto",
-          borderRadius: "16px",
+          p: 4,
+          bgcolor: "rgba(0,206,229,0.06)",
+          borderRadius: 2,
           border: "1px solid #FFFFFF4D",
-          padding: "2rem",
-          color: "#FFFFFF",
-          boxShadow: "0 4px 20px rgba(0,0,0,0.3)",
-          position: "relative",
         }}
       >
-        <Typography variant="h5" align="center" sx={{ mb: 4 }}>
-          Buy Offer (DIAM → TradeToken)
+        <Typography variant="h5" align="center" gutterBottom>
+          Buy Offer (DIAM → {assetCode})
         </Typography>
+        <br />
+        {/* ----------- explanation banner ----------- */}
+        <Alert severity="info" sx={{ mb: 2 }}>
+          Placing a <strong>buy offer</strong> locks DIAM in the order‑book.
+          Your balance won’t change until someone matches the order or you
+          cancel it.
+        </Alert>
+        <br />
 
-        <TextField
-          label="Buy Amount (DIAM)"
-          placeholder="0"
+        <Autocomplete
+          options={assetCodes}
+          value={assetCode}
+          onChange={(_, v) => setAssetCode(v || "DIAM")}
           fullWidth
-          variant="outlined"
-          value={buyAmount}
-          onChange={handleBuyAmountChange}
-          sx={{
-            marginBottom: "1rem",
-            border: "1px solid #FFFFFF4D",
-            borderRadius: "8px",
-            input: { color: "#fff" },
-          }}
+          disableClearable
+          popupIcon={<FaChevronDown style={{color:"white"}} fontSize={18} />}
+          sx={{ mb: 2, input: { color: "#fff",  } }}
+          renderInput={(params) => (
+            <TextField
+              {...params}
+              label="Select Token"
+              variant="outlined"
+              InputProps={{ ...params.InputProps, sx: { color: "#fff", border:"1px solid gray",borderRadius:"8px" } ,  }}
+            />
+          )}
         />
 
         <TextField
-          label={`Price (${assetCode} per DIAM)`}
-          placeholder="0.1"
+          label={`Buy Amount (${assetCode})`}
+          value={buyAmount}
+          onChange={(e) => setBuyAmount(e.target.value.replace(/[^0-9.]/g, ""))}
           fullWidth
           variant="outlined"
+          sx={{ mb: 2, input: { color: "#fff" , border:"1px solid gray",borderRadius:"8px"} }}
+        />
+
+        <TextField
+          label="Price"
+          placeholder="0.1"
           value={price}
-          onChange={handlePriceChange}
-          sx={{
-            marginBottom: "1rem",
-            border: "1px solid #FFFFFF4D",
-            borderRadius: "8px",
-            input: { color: "#fff" },
-          }}
+          onChange={(e) => setPrice(e.target.value.replace(/[^0-9.]/g, ""))}
+          fullWidth
+          variant="outlined"
+          sx={{ mb: 3, input: { color: "#fff", border:"1px solid gray",borderRadius:"8px" } }}
         />
 
         <CustomButton
@@ -308,12 +369,11 @@ const BuyOfferPage = () => {
           onClick={handleBuyFlow}
           disabled={loading || !walletPublicKey}
         >
-          {loading ? "Processing..." : "Create Buy Offer"}
+          {loading ? <CircularProgress size={24} /> : "Submit Buy Offer"}
         </CustomButton>
-
-    
       </Box>
 
+      {/* ------------- modal ------------- */}
       <TransactionModal
         open={modalOpen}
         onClose={() => setModalOpen(false)}

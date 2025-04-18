@@ -30,23 +30,31 @@ const DiamWalletConnect = () => {
       setError("DIAM Wallet is not installed or not available.");
       return;
     }
+  
     try {
       const connectionResult = await window.diam.connect();
       console.log("Connection Result:", connectionResult);
-      const publicKeyData = connectionResult?.message?.data?.[0];
-      if (publicKeyData && publicKeyData.diamPublicKey) {
-        const walletKey = publicKeyData.diamPublicKey;
+  
+      // Grab the first element in message.data[]
+      const publicKeyData = connectionResult?.message?.data?.[0] || {};
+  
+      // Try both possible field names
+      const walletKey =
+        publicKeyData.publicKey || publicKeyData.diamPublicKey;
+  
+      if (walletKey) {
         setPublicKey(walletKey);
         localStorage.setItem("diamPublicKey", walletKey);
       } else {
-        setError("DIAM PublicKey not found in the connection result.");
+        setError("DIAM publicKey not found in the connection result.");
+        console.error("Unexpected data format:", publicKeyData);
       }
     } catch (err) {
-      setError(`Error connecting to the DIAM Wallet: ${err}`);
-      console.error("Error:", err);
+      setError(`Error connecting to the DIAM Wallet: ${err.message || err}`);
+      console.error("Error connecting to DIAM Wallet:", err);
     }
   };
-
+  
   const handleButtonClick = async () => {
     setError(null);
     if (!publicKey) {
