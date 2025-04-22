@@ -1,4 +1,3 @@
-// src/components/ViewPools/index.jsx
 import React, { useState, useEffect, useCallback } from "react";
 import {
   Container,
@@ -90,11 +89,18 @@ export default function ViewPosition() {
     setModalOpen(true);
   }
 
-  async function handleLiquidityAction(poolId, amtA, amtB, minPrice, maxPrice) {
+  async function handleLiquidityAction(
+    poolId,
+    amtA,
+    amtB,
+    minPrice,
+    maxPrice
+  ) {
     setTxModalOpen(true);
     setTxStatus("pending");
-    setTxMessage(`${actionMode} in progress...`);
+    setTxMessage(`${actionMode} in progress…`);
     setTxHash("");
+
     try {
       const poolIdBuf = new Uint8Array(Buffer.from(poolId, "hex"));
       const account = await server.loadAccount(walletId);
@@ -104,6 +110,7 @@ export default function ViewPosition() {
       });
 
       if (actionMode === "deposit") {
+        // ——— ADD LIQUIDITY ———
         txb.addOperation(
           Operation.liquidityPoolDeposit({
             liquidityPoolId: poolIdBuf,
@@ -114,12 +121,37 @@ export default function ViewPosition() {
           })
         );
       } else {
+        // ——— REMOVE LIQUIDITY ———
+        // fetch live reserves so we can compute expected amounts + slippage floor
+        const pool = await server
+          .liquidityPools()
+          .liquidityPoolId(poolId)
+          .call();
+        const [r0, r1] = pool.reserves;
+        const reserveA = parseFloat(r0.amount);
+        const reserveB = parseFloat(r1.amount);
+        const totalShares = parseFloat(pool.total_shares);
+        const shareFraction = parseFloat(amtA) / totalShares;
+
+        // expected pro‐rata withdraw
+        const expectedA = shareFraction * reserveA;
+        const expectedB = shareFraction * reserveB;
+
+        // apply slippage tolerance (e.g. 0.5%)
+        const SLIPPAGE_TOLERANCE = 0.005;
+        const minAmountA = (expectedA * (1 - SLIPPAGE_TOLERANCE)).toFixed(
+          7
+        );
+        const minAmountB = (expectedB * (1 - SLIPPAGE_TOLERANCE)).toFixed(
+          7
+        );
+
         txb.addOperation(
           Operation.liquidityPoolWithdraw({
             liquidityPoolId: poolIdBuf,
             amount: amtA,
-            minAmountA: amtB,
-            minAmountB: "0.0000001",
+            minAmountA,
+            minAmountB,
           })
         );
       }
@@ -214,11 +246,19 @@ export default function ViewPosition() {
                     total > 0 ? ((yours / total) * 100).toFixed(2) : "0.00";
 
                   return (
-                    <TableRow key={lp.liquidity_pool_shares}>
+                    <TableRow
+                      key={lp.liquidity_pool_shares}
+                      sx={{
+                        "&:nth-of-type(odd)": { bgcolor: "#0F1A20" },
+                        "&:hover": { bgcolor: "#1A2A34" },
+                      }}
+                    >
                       <TableCell align="center" sx={{ color: "#CCC" }}>
                         {idx + 1}
                       </TableCell>
-                      <TableCell sx={{ color: "#FFF", wordBreak: "break-all" }}>
+                      <TableCell
+                        sx={{ color: "#FFF", wordBreak: "break-all" }}
+                      >
                         {lp.liquidity_pool_id.slice(0, 6)}…
                         {lp.liquidity_pool_id.slice(-6)}
                       </TableCell>
@@ -266,17 +306,21 @@ export default function ViewPosition() {
             poolMeta[selectedPool?.liquidity_pool_id]?.reserves
               ? {
                   r0: {
-                    amount: poolMeta[selectedPool.liquidity_pool_id].reserves[0]
-                      .amount,
+                    amount:
+                      poolMeta[selectedPool.liquidity_pool_id].reserves[0]
+                        .amount,
                     code: extractTokenCode(
-                      poolMeta[selectedPool.liquidity_pool_id].reserves[0].asset
+                      poolMeta[selectedPool.liquidity_pool_id].reserves[0]
+                        .asset
                     ),
                   },
                   r1: {
-                    amount: poolMeta[selectedPool.liquidity_pool_id].reserves[1]
-                      .amount,
+                    amount:
+                      poolMeta[selectedPool.liquidity_pool_id].reserves[1]
+                        .amount,
                     code: extractTokenCode(
-                      poolMeta[selectedPool.liquidity_pool_id].reserves[1].asset
+                      poolMeta[selectedPool.liquidity_pool_id].reserves[1]
+                        .asset
                     ),
                   },
                 }
