@@ -1,5 +1,5 @@
 // src/components/LiquidityActionModal.jsx
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import {
   Modal,
   Box,
@@ -14,6 +14,8 @@ import {
 import { IoCloseCircleOutline } from "react-icons/io5";
 import CustomButton from "../comman/CustomButton";
 import { priceToFraction } from "./utils/fraction";
+import PriceRangeChart from "./PriceRangeChart";
+
 import { Aurora } from "diamnet-sdk";
 import { Buffer } from "buffer";
 
@@ -29,9 +31,17 @@ const fmt = (x, d = 2) =>
 const decRx = /^\d+(\.\d+)?$/;
 const okDec = (s) => decRx.test(s);
 
+const FULL_MIN = { n: 1, d: 10_000_000 }; // 0.0000001
+const FULL_MAX = { n: 1_000_000_000, d: 1 };
 
-const FULL_MIN = { n: 1, d: 10_000_000 };        // 0.0000001
-const FULL_MAX = { n: 1_000_000_000, d: 1 };  
+const RANGES_MS = {
+  "1D": 24 * 60 * 60 * 1000,
+  "1W": 7 * 24 * 60 * 60 * 1000,
+  "1M": 30 * 24 * 60 * 60 * 1000,
+  "1Y": 365 * 24 * 60 * 60 * 1000,
+  All: Infinity,
+};
+
 // ================================================================
 export default function LiquidityActionModal({
   open,
@@ -67,6 +77,11 @@ export default function LiquidityActionModal({
   const { amount: aAmt, code: aCode } = reserves.r0;
   const { amount: bAmt, code: bCode } = reserves.r1;
 
+  // chart state
+  const [series, setSeries] = useState([]);
+  const [dist, setDist] = useState([]);
+  const [zoom, setZoom] = useState("1M");
+
   useEffect(() => {
     const a = parseFloat(aAmt) || 0;
     const b = parseFloat(bAmt) || 0;
@@ -101,6 +116,72 @@ export default function LiquidityActionModal({
     }, 5_000);
     return () => clearInterval(id);
   }, [open, mode, poolId]);
+
+  /* ────────── fetch last 100 operations -> series & dist ───── */
+  useEffect(() => {
+    if (!open) return;
+
+    (async () => {
+      try {
+        const url = `https://diamtestnet.diamcircle.io/liquidity_pools/${poolId}/operations`;
+        const j = await (await fetch(url)).json();
+        const ops = j._embedded?.records || [];
+
+        // price mid-points
+        const pts = ops
+          .filter((o) => o.type === "liquidity_pool_deposit")
+          .map((o) => {
+            const ts = +new Date(o.created_at);
+            const mn =
+              (o.min_price_r?.n ?? parseFloat(o.min_price)) /
+              (o.min_price_r?.d ?? 1);
+            const mx =
+              (o.max_price_r?.n ?? parseFloat(o.max_price)) /
+              (o.max_price_r?.d ?? 1);
+            return { ts, price: (mn + mx) / 2 };
+          });
+
+        // liquidity histogram (40 bins)
+        const buckets = 40;
+        const hist = Array(buckets).fill(0);
+        if (pts.length) {
+          const minP = Math.min(...pts.map((p) => p.price));
+          const maxP = Math.max(...pts.map((p) => p.price));
+          const span = maxP - minP || 1;
+          ops.forEach((o) => {
+            if (o.type !== "liquidity_pool_deposit") return;
+            const p =
+              ((o.min_price_r?.n ?? parseFloat(o.min_price)) /
+                (o.min_price_r?.d ?? 1) +
+                (o.max_price_r?.n ?? parseFloat(o.max_price)) /
+                  (o.max_price_r?.d ?? 1)) /
+              2;
+            const vol = parseFloat(o.reserves_deposited?.[1]?.amount || 0);
+            const idx = Math.min(
+              buckets - 1,
+              Math.floor(((p - minP) / span) * buckets)
+            );
+            hist[idx] += vol;
+          });
+          const distArr = hist.map((v, i) => ({
+            price: minP + ((i + 0.5) * (span || 1)) / buckets,
+            liquidity: v,
+          }));
+          setDist(distArr);
+        }
+        setSeries(pts);
+      } catch (e) {
+        console.warn("ops fetch failed", e);
+      }
+    })();
+  }, [open, poolId]);
+
+  /* ────────── zoom filter ───────── */
+  const now = Date.now();
+  const filteredSeries = useMemo(() => {
+    const win = RANGES_MS[zoom];
+    return series.filter((p) => now - p.ts <= win);
+  }, [series, zoom]);
 
   // A‑>B helper
   useEffect(() => {
@@ -198,14 +279,23 @@ export default function LiquidityActionModal({
         sx={{
           bgcolor: "#0A1B1F",
           p: 4,
-          width: 650,
+          width: 750,
           maxWidth: "90vw",
           color: "#fff",
           borderRadius: 2,
+          height: "100vh",
+          overflowY: "scroll",
+      
+          "&::-webkit-scrollbar": {
+            display: "2px",
+          },
+          "-ms-overflow-style": "none",
+          /* Firefox */
+          "scrollbar-width": "5px",
         }}
       >
         {/* header */}
-        <Box sx={{ display: "flex", justifyContent: "space-between", mb: 2 }}>
+        <Box sx={{ display: "flex", justifyContent: "space-between" }}>
           <Typography sx={{ fontSize: 24, fontWeight: 600 }}>
             {mode === "deposit" ? "Add Liquidity" : "Remove Liquidity"}
           </Typography>
@@ -221,7 +311,7 @@ export default function LiquidityActionModal({
         </Box>
         <Divider sx={{ mb: 2 }} />
 
-        <Typography sx={{ mb: 1, wordBreak: "break-all" }}>
+        <Typography sx={{ mb: 1, wordBreak: "break-all", fontSize: "12px" }}>
           <strong>Pool ID:</strong>&nbsp;{poolId}
         </Typography>
 
@@ -263,6 +353,17 @@ export default function LiquidityActionModal({
           </Box>
         )}
 
+        <PriceRangeChart
+          data={filteredSeries}
+          distribution={dist}
+          price={spot}
+          min={rangeType === "custom" ? parseFloat(priceLow) : null}
+          max={rangeType === "custom" ? parseFloat(priceHigh) : null}
+          onZoom={setZoom}
+        />
+        <br />
+        <br />
+
         {err && (
           <Typography color="error" sx={{ mb: 2 }}>
             {err}
@@ -278,12 +379,16 @@ export default function LiquidityActionModal({
               exclusive
               onChange={(_, v) => v && setRange(v)}
               sx={{
-                mb: 3,
+                mb: 2,
                 bgcolor: "#000",
-                "& .MuiToggleButton-root": { color: "#fff", flex: 1 },
+                "& .MuiToggleButton-root": { color: "#fff", flex: 1 , 
+
+                },
                 "& .Mui-selected": {
                   bgcolor: "#4caf50!important",
                   color: "#0A1B1F",
+                fontSize:12,
+
                 },
               }}
             >
@@ -305,7 +410,7 @@ export default function LiquidityActionModal({
                     placeholder={lbl === "Low" ? "0.95" : "1.05"}
                     fullWidth
                     InputProps={{
-                      sx: { color: "#fff", border: "1px solid gray" },
+                      sx: { color: "#fff", border: "1px solid gray",  },
                     }}
                   />
                 ))}
