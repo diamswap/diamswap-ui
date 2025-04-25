@@ -678,7 +678,7 @@ export default function SwapPage() {
             <CustomButton
               variant="contained"
               onClick={handleSwap}
-              disabled={loading || !walletPublicKey}
+              disabled={loading}
             >
               {loading ? <CircularProgress size={24} /> : "Swap"}
             </CustomButton>
