@@ -355,37 +355,45 @@ export default function SwapPage() {
   const pool = getPoolForPair(fromCode, toCode, pools);
 
   // live price from reserves
-  const livePrice =
-    pool
-      ? (
-          parseFloat(
-            pool.reserves.find(
-              (r) => extractTokenCode(r.asset) === toCode
-            ).amount
-          ) /
-          parseFloat(
-            pool.reserves.find(
-              (r) => extractTokenCode(r.asset) === fromCode
-            ).amount
-          )
-        ).toFixed(6)
-      : "0.000000";
+// live price from reserves (with swap fee)
+const livePrice = pool
+  ? (() => {
+      const feeRate = pool.fee_bp / 10000;
+      const rIn = parseFloat(
+        pool.reserves.find(r => extractTokenCode(r.asset) === fromCode).amount
+      );
+      const rOut = parseFloat(
+        pool.reserves.find(r => extractTokenCode(r.asset) === toCode).amount
+      );
+      const inWithFee = 1 * (1 - feeRate);
+      const numerator = inWithFee * rOut;
+      const denominator = rIn + inWithFee;
+      return (numerator / denominator).toFixed(6);
+    })()
+  : "0.000000";
+
 
   // estimate receive on input
-  const estimatedReceived = (() => {
-    if (!sendAmt || !pool) return "";
-    const inRes = parseFloat(
-      pool.reserves.find((r) => extractTokenCode(r.asset) === fromCode)
-        .amount
-    );
-    const outRes = parseFloat(
-      pool.reserves.find((r) => extractTokenCode(r.asset) === toCode).amount
-    );
-    const feeRate = pool.fee_bp / 10000;
-    const effective = parseFloat(sendAmt) * (1 - feeRate);
-    const dy = (outRes * effective) / (inRes + effective);
-    return dy.toFixed(4);
-  })();
+// estimate receive on input (constant-product swap with fee)
+const estimatedReceived = pool && sendAmt
+  ? (() => {
+      const feeRate = pool.fee_bp / 10000;
+      const inRes = parseFloat(
+        pool.reserves.find(r => extractTokenCode(r.asset) === fromCode).amount
+      );
+      const outRes = parseFloat(
+        pool.reserves.find(r => extractTokenCode(r.asset) === toCode).amount
+      );
+      const amountIn = parseFloat(sendAmt);
+      const inWithFee = amountIn * (1 - feeRate);
+      const numerator = inWithFee * outRes;
+      const denominator = inRes + inWithFee;
+      return (numerator / denominator).toFixed(6);
+    })()
+  : "";
+
+
+  
 
   // ratio of receive/send only when user has input
   const ratio =

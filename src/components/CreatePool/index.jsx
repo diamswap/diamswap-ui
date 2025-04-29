@@ -1,5 +1,5 @@
 // src/pages/CreatePoolPage.jsx
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   Container,
   Box,
@@ -19,38 +19,38 @@ import { Buffer } from "buffer";
 import CustomButton from "../../comman/CustomButton";
 import TransactionModal from "./TransactionModal";
 
-if (!window.Buffer) {
-  window.Buffer = Buffer;
-}
+if (!window.Buffer) window.Buffer = Buffer;
 
 const NETWORK_PASSPHRASE = "Diamante Testnet 2024";
 const FRIENDBOT_URL = "https://friendbot.diamcircle.io?addr=";
-
 const feeTiers = [
-  { tier: "0.3%", description: "Standard fee (0.3%)", tvl: "Medium TVL", select: "Select" },
-  { tier: "1%",   description: "High fee (1%)",       tvl: "High TVL",   select: "Select" },
+  { tier: "0.3%", description: "Standard fee (0.3%)", tvl: "Medium TVL" },
+  { tier: "1%", description: "High fee (1%)", tvl: "High TVL" },
 ];
+// Avoid op_bad_price by allowing full price range
+const FULL_MIN = { n: 1, d: 10_000_000 };
+const FULL_MAX = { n: 1_000_000_000, d: 1 };
 
 export default function CreatePoolPage() {
-  // ─── State ─────────────────────────────────────────────────────────
+  // ─── State ─────────────────────────────────────────
   const [step, setStep] = useState(0);
   const [tokenA, setTokenA] = useState("native");
   const [assetCode, setAssetCode] = useState("");
-  const [tokenB, setTokenB] = useState("");             // CODE:ISSUER
+  const [tokenB, setTokenB] = useState("");
   const [assetCodes, setAssetCodes] = useState([]);
+  const [pools, setPools] = useState([]);
   const [selectedFeeTier, setSelectedFeeTier] = useState("0.3%");
   const [isExpanded, setIsExpanded] = useState(false);
   const [ethAmount, setEthAmount] = useState("");
   const [usdtAmount, setUsdtAmount] = useState("");
+  const [livePrice, setLivePrice] = useState("0.000000");
+  const lastEdited = useRef("A"); // track which field was last typed
 
   const [loading, setLoading] = useState(false);
-  const [logs, setLogs] = useState([]);
-  const [poolDetails, setPoolDetails] = useState(null);
   const [modalOpen, setModalOpen] = useState(false);
-  const [transactionStatus, setTransactionStatus] = useState("");
+  const [transactionStatus, setTransactionStatus] = useState("pending");
   const [transactionMessage, setTransactionMessage] = useState("");
   const [transactionHash, setTransactionHash] = useState("");
-
   const [tokenBalances, setTokenBalances] = useState([]);
 
   const walletPublicKey = localStorage.getItem("diamPublicKey") || "";
@@ -62,51 +62,40 @@ export default function CreatePoolPage() {
 
   const addLog = (msg) => {
     console.log(msg);
-    setLogs((prev) => [...prev, msg]);
   };
 
-  // ─── 1️⃣ Load SDK + server + issuer ─────────────────────────────────
+  // ─── 1️⃣ Load SDK + Server ─────────────────────────
   useEffect(() => {
     (async () => {
-      try {
-        const DiamSdkModule = await import("diamnet-sdk");
-        const diamnetSdk = DiamSdkModule.default || DiamSdkModule;
-        setSdk(diamnetSdk);
-        setServer(new diamnetSdk.Aurora.Server("https://diamtestnet.diamcircle.io/"));
-        const issuer = diamnetSdk.Keypair.random();
-        setIssuerKeypair(issuer);
-        addLog("SDK loaded. Issuer: " + issuer.publicKey());
-      } catch (e) {
-        addLog("SDK load error: " + e);
-      }
+      const Diam = await import("diamnet-sdk");
+      const DiamSdk = Diam.default || Diam;
+      setSdk(DiamSdk);
+      setServer(new DiamSdk.Aurora.Server("https://diamtestnet.diamcircle.io/"));
+      const issuer = DiamSdk.Keypair.random();
+      setIssuerKeypair(issuer);
+      addLog("SDK loaded. Issuer: " + issuer.publicKey());
     })();
   }, []);
 
-  // ─── 2️⃣ Fetch your wallet balances ─────────────────────────────────
+  // ─── 2️⃣ Fetch balances ─────────────────────────────
   useEffect(() => {
     if (!walletPublicKey) return;
-    (async () => {
-      try {
-        const res = await fetch(`https://diamtestnet.diamcircle.io/accounts/${walletPublicKey}`);
-        const data = await res.json();
-        setTokenBalances(data.balances || []);
-      } catch (err) {
-        console.error("Error fetching balances:", err);
-        addLog("Error fetching balances: " + err);
-      }
-    })();
+    fetch(`https://diamtestnet.diamcircle.io/accounts/${walletPublicKey}`)
+      .then((r) => r.json())
+      .then((d) => setTokenBalances(d.balances || []))
+      .catch((e) => addLog("Balances error: " + e));
   }, [walletPublicKey]);
 
-  // ─── 3️⃣ Fetch existing pool asset codes ────────────────────────────
+  // ─── 3️⃣ Fetch pools & asset codes ─────────────────
   useEffect(() => {
-    (async () => {
-      try {
-        const resp = await fetch("https://diamtestnet.diamcircle.io/liquidity_pools?limit=200");
-        const json = await resp.json();
-        const pools = json._embedded?.records || json.records || [];
+    fetch("https://diamtestnet.diamcircle.io/liquidity_pools?limit=200")
+      .then((r) => r.json())
+      .then((json) => {
+        const recs = json._embedded?.records || json.records || [];
+        setPools(recs);
         const codes = Array.from(
           new Set(
-            pools.flatMap((p) =>
+            recs.flatMap((p) =>
               p.reserves
                 .filter((r) => r.asset !== "native")
                 .map((r) => r.asset.split(":")[0])
@@ -114,13 +103,11 @@ export default function CreatePoolPage() {
           )
         );
         setAssetCodes(codes);
-      } catch (e) {
-        addLog("Asset codes fetch error: " + e);
-      }
-    })();
+      })
+      .catch((e) => addLog("Pools error: " + e));
   }, []);
 
-  // ─── 4️⃣ When user picks assetCode, find real issuer ────────────────
+  // ─── 4️⃣ Resolve B issuer once code picked ─────────
   useEffect(() => {
     if (!assetCode) return;
     const entry = tokenBalances.find(
@@ -128,40 +115,76 @@ export default function CreatePoolPage() {
     );
     if (entry) {
       setTokenB(`${assetCode}:${entry.asset_issuer}`);
-      addLog(`Token B set to ${assetCode}:${entry.asset_issuer}`);
     }
   }, [assetCode, tokenBalances]);
 
-  const handleToggleExpand = () => setIsExpanded((x) => !x);
+  // ─── 5️⃣ Compute livePrice + auto-fill ──────────────
+  useEffect(() => {
+    if (!pools.length || !tokenA || !tokenB) return;
 
-  // ─── Custom parseTokenInput ─────────────────────────────────────────
+    // parse asset
+    const parse = (t) =>
+      t === "native"
+        ? { code: "native", issuer: null }
+        : { code: t.split(":")[0], issuer: t.split(":")[1] };
+    const { code: A, issuer: iA } = parse(tokenA);
+    const { code: B, issuer: iB } = parse(tokenB);
+
+    // find that pool
+    const pool = pools.find((p) => {
+      const has = (c, i) =>
+        c === "native"
+          ? p.reserves.some((r) => r.asset === "native")
+          : p.reserves.some((r) => r.asset === `${c}:${i}`);
+      return has(A, iA) && has(B, iB);
+    });
+    if (!pool) {
+      setLivePrice("0.000000");
+      return;
+    }
+
+    // read reserves
+    const amtA = parseFloat(
+      A === "native"
+        ? pool.reserves.find((r) => r.asset === "native").amount
+        : pool.reserves.find((r) => r.asset === `${A}:${iA}`).amount
+    );
+    const amtB = parseFloat(
+      B === "native"
+        ? pool.reserves.find((r) => r.asset === "native").amount
+        : pool.reserves.find((r) => r.asset === `${B}:${iB}`).amount
+    );
+    if (!amtA) {
+      setLivePrice("0.000000");
+      return;
+    }
+
+    const price = amtB / amtA;
+    setLivePrice(price.toFixed(6));
+
+    // auto-fill the opposite field
+    if (lastEdited.current === "A" && ethAmount) {
+      setUsdtAmount((parseFloat(ethAmount) * price).toFixed(6));
+    }
+    if (lastEdited.current === "B" && usdtAmount) {
+      setEthAmount((parseFloat(usdtAmount) / price).toFixed(6));
+    }
+  }, [ethAmount, usdtAmount, tokenA, tokenB, pools]);
+
+  // ─── Helpers ───────────────────────────────────────
   const parseTokenInput = (input) => {
     const val = input.trim();
-    // native
     if (/^(native|xlm)$/i.test(val)) return sdk.Asset.native();
-
     const [code, issuer] = val.split(":");
-    // must have code + issuer, code <= 12 chars
-    if (!code || !issuer || code.length > 12) {
-      throw new Error("MISSING_TOKENS");
-    }
+    if (!code || !issuer || code.length > 12) throw new Error("MISSING_TOKENS");
     return new sdk.Asset(code, issuer);
   };
-
   const friendbotFund = async (pk) => {
-    try {
-      const resp = await fetch(`${FRIENDBOT_URL}${pk}`);
-      if (resp.ok) addLog("Funded: " + pk);
-      else {
-        const err = await resp.text();
-        addLog("Fund error: " + err);
-      }
-    } catch (e) {
-      addLog("Friendbot error: " + e);
-    }
+    const resp = await fetch(`${FRIENDBOT_URL}${pk}`);
+    if (!resp.ok && resp.status !== 400) throw new Error(resp.statusText);
   };
 
-  // ─── Full fixed handleCreatePool ────────────────────────────────────
+  // ─── Create pool ───────────────────────────────────
   const handleCreatePool = async () => {
     if (!server || !sdk || !issuerKeypair || !walletPublicKey) return;
     setLoading(true);
@@ -170,133 +193,100 @@ export default function CreatePoolPage() {
     setTransactionMessage("Starting liquidity pool creation...");
 
     try {
-      const {
-        TransactionBuilder,
-        BASE_FEE,
-        Operation,
-        LiquidityPoolAsset,
-        getLiquidityPoolId,
-      } = sdk;
-
-      // 🍭 Fund only your wallet for fees
+      const { TransactionBuilder, BASE_FEE, Operation, LiquidityPoolAsset, getLiquidityPoolId } =
+        sdk;
       await friendbotFund(walletPublicKey);
 
-      let assetA, assetB;
-      try {
-        assetA = parseTokenInput(tokenA);
-        assetB = parseTokenInput(tokenB);
-      } catch (_) {
-        // our friendly error
-        setTransactionStatus("error");
-        setTransactionMessage("You must have both tokens to create a pool.");
-        addLog("Error: Missing tokens for liquidity pool creation.");
-        setLoading(false);
-        return;
-      }
+      // parse assets
+      let assetObjA = parseTokenInput(tokenA);
+      let assetObjB = parseTokenInput(tokenB);
 
-      // 🏦 Re-fetch balances via REST
+      // re-fetch balances
       const balResp = await fetch(
         `https://diamtestnet.diamcircle.io/accounts/${walletPublicKey}`
       );
-      const balData = await balResp.json();
-      const balances = balData.balances || [];
-
-      // ✅ Check balances
-      const hasAssetA = balances.some((b) => {
-        if (assetA.isNative()) return b.asset_type === "native";
-        return (
-          b.asset_code === assetA.getCode() &&
-          b.asset_issuer === assetA.getIssuer()
-        );
-      });
-      const hasAssetB = balances.some((b) => {
-        if (assetB.isNative()) return b.asset_type === "native";
-        return (
-          b.asset_code === assetB.getCode() &&
-          b.asset_issuer === assetB.getIssuer()
-        );
-      });
-      if (!hasAssetA || !hasAssetB) {
-        setTransactionStatus("error");
-        setTransactionMessage("You must have both tokens to create a pool.");
-        addLog("Error: Missing tokens for liquidity pool creation.");
-        setLoading(false);
-        return;
+      const balances = (await balResp.json()).balances || [];
+      const hasA = balances.some((b) =>
+        assetObjA.isNative()
+          ? b.asset_type === "native"
+          : b.asset_code === assetObjA.getCode() && b.asset_issuer === assetObjA.getIssuer()
+      );
+      const hasB = balances.some((b) =>
+        assetObjB.isNative()
+          ? b.asset_type === "native"
+          : b.asset_code === assetObjB.getCode() && b.asset_issuer === assetObjB.getIssuer()
+      );
+      if (!hasA || !hasB) {
+        throw new Error("You must hold both assets to create a pool.");
       }
 
-      // 🔗 Build trustline for Token B
-      let trustTx = new TransactionBuilder(
-        await server.loadAccount(walletPublicKey),
-        { fee: BASE_FEE, networkPassphrase: NETWORK_PASSPHRASE }
-      )
-        .addOperation(Operation.changeTrust({ asset: assetB }))
+      // trustline B
+      let tx1 = new TransactionBuilder(await server.loadAccount(walletPublicKey), {
+        fee: BASE_FEE,
+        networkPassphrase: NETWORK_PASSPHRASE,
+      })
+        .addOperation(Operation.changeTrust({ asset: assetObjB }))
         .setTimeout(30)
         .build();
-      await window.diam.sign(trustTx.toXDR(), true, NETWORK_PASSPHRASE);
-      await server.submitTransaction(trustTx);
+      await window.diam.sign(tx1.toXDR(), true, NETWORK_PASSPHRASE);
+      await server.submitTransaction(tx1);
 
-      // 🏗️ Build LP asset
+      // LP Asset
       const feeNum = parseFloat(selectedFeeTier) * 100;
-      const lpAsset = new LiquidityPoolAsset(assetA, assetB, feeNum);
+      const lpAsset = new LiquidityPoolAsset(assetObjA, assetObjB, feeNum);
       lpAsset.type = "liquidity_pool_constant_product";
       lpAsset.assetType = "liquidity_pool_constant_product";
-      let poolId;
-      try {
-        poolId = getLiquidityPoolId("constant_product", {
-          assetA,
-          assetB,
-          fee: feeNum,
-        }).toString("hex");
-        lpAsset.liquidityPoolId = poolId;
-      } catch (e) {
-        addLog("getLiquidityPoolId error: " + e);
-        poolId = "N/A";
-      }
+      const poolId = getLiquidityPoolId("constant_product", {
+        assetA: assetObjA,
+        assetB: assetObjB,
+        fee: feeNum,
+      })
+        .toString("hex");
+      lpAsset.liquidityPoolId = poolId;
 
-      // 🔗 Trustline LP shares
-      let lpTrust = new TransactionBuilder(
-        await server.loadAccount(walletPublicKey),
-        { fee: BASE_FEE, networkPassphrase: NETWORK_PASSPHRASE }
-      )
+      // trustline LP
+      let tx2 = new TransactionBuilder(await server.loadAccount(walletPublicKey), {
+        fee: BASE_FEE,
+        networkPassphrase: NETWORK_PASSPHRASE,
+      })
         .addOperation(Operation.changeTrust({ asset: lpAsset }))
         .setTimeout(30)
         .build();
-      await window.diam.sign(lpTrust.toXDR(), true, NETWORK_PASSPHRASE);
-      await server.submitTransaction(lpTrust);
+      await window.diam.sign(tx2.toXDR(), true, NETWORK_PASSPHRASE);
+      await server.submitTransaction(tx2);
 
-      // 💧 Deposit liquidity
-      let depositTx = new TransactionBuilder(
-        await server.loadAccount(walletPublicKey),
-        { fee: BASE_FEE, networkPassphrase: NETWORK_PASSPHRASE }
-      )
+      // deposit
+      let tx3 = new TransactionBuilder(await server.loadAccount(walletPublicKey), {
+        fee: BASE_FEE,
+        networkPassphrase: NETWORK_PASSPHRASE,
+      })
         .addOperation(
           Operation.liquidityPoolDeposit({
             liquidityPoolId: new Uint8Array(Buffer.from(poolId, "hex")),
-            maxAmountA: ethAmount || "10",
-            maxAmountB: usdtAmount || "20",
-            minPrice: { n: 1, d: 2 },
-            maxPrice: { n: 2, d: 1 },
+            maxAmountA: ethAmount || "0",
+            maxAmountB: usdtAmount || "0",
+            minPrice: FULL_MIN,
+            maxPrice: FULL_MAX,
           })
         )
         .setTimeout(30)
         .build();
-      await window.diam.sign(depositTx.toXDR(), true, NETWORK_PASSPHRASE);
-      await server.submitTransaction(depositTx);
+      await window.diam.sign(tx3.toXDR(), true, NETWORK_PASSPHRASE);
+      await server.submitTransaction(tx3);
 
-      // ✅ Done
-      setPoolDetails({ lpAsset, liquidityPoolId: poolId });
       setTransactionStatus("success");
       setTransactionMessage(`Pool created! ID: ${poolId}`);
       setTransactionHash(poolId);
     } catch (e) {
       setTransactionStatus("error");
-      setTransactionMessage(e.toString());
-      addLog("Error creating pool: " + e);
+      setTransactionMessage(e.message || e.toString());
+      addLog("Creation error: " + e);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
-  // ─── Render ────────────────────────────────────────────────────────
+  // ─── Render ─────────────────────────────────────────
   return (
     <Container maxWidth="sm" sx={{ mt: 4, mb: 4 }}>
       <Box
@@ -311,40 +301,11 @@ export default function CreatePoolPage() {
           Create Liquidity Pool
         </Typography>
 
-        {/* Your Tokens */}
-        <Box sx={{ mb: 3 }}>
-          <Typography variant="h6" color="#fff" gutterBottom>
-            Your Tokens
-          </Typography>
-          {tokenBalances.length === 0 ? (
-            <Typography color="#aaa">Loading tokens…</Typography>
-          ) : (
-            <Grid container spacing={1}>
-              {tokenBalances.map((t, i) => (
-                <Grid item xs={12} key={i}>
-                  <Card sx={{ p: 1, backgroundColor: "#1a1a1a", color: "#fff" }}>
-                    <Typography>
-                      {t.asset_type === "native" ? "DIAM (native)" : t.asset_code}
-                    </Typography>
-                    <Typography color="#aaa" variant="body2">
-                      Balance: {t.balance}
-                    </Typography>
-                  </Card>
-                </Grid>
-              ))}
-            </Grid>
-          )}
-        </Box>
-
-        {/* Pair/Fee or Deposit */}
         {step === 0 ? (
           <>
-            {/* Pair + Fee */}
+            {/* PAIR + FEE */}
             <Typography variant="h6" sx={{ mb: 1, color: "#fff" }}>
               Select pair
-            </Typography>
-            <Typography variant="body2" sx={{ mb: 2, color: "#aaa" }}>
-              Choose the tokens you want to provide liquidity for.
             </Typography>
             <Stack direction="row" spacing={2} sx={{ mb: 3 }}>
               <TextField
@@ -359,13 +320,6 @@ export default function CreatePoolPage() {
                     bgcolor: "#1a1a1a",
                     borderRadius: 2,
                     color: "#fff",
-                    "& .MuiOutlinedInput-notchedOutline": { borderColor: "#333" },
-                    "&:hover .MuiOutlinedInput-notchedOutline": {
-                      borderColor: "#555",
-                    },
-                    "&.Mui-focused .MuiOutlinedInput-notchedOutline": {
-                      borderColor: "#00d4ff",
-                    },
                   },
                   endAdornment: (
                     <InputAdornment position="end">
@@ -386,32 +340,26 @@ export default function CreatePoolPage() {
                     bgcolor: "#1a1a1a",
                     borderRadius: 2,
                     color: "#fff",
-                    "& .MuiOutlinedInput-notchedOutline": { borderColor: "#333" },
-                    "&:hover .MuiOutlinedInput-notchedOutline": {
-                      borderColor: "#555",
-                    },
-                    "&.Mui-focused .MuiOutlinedInput-notchedOutline": {
-                      borderColor: "#00d4ff",
-                    },
                   },
-                  input: { color: "#fff" },
                 }}
                 renderInput={(params) => (
                   <TextField
                     {...params}
-                    label="Select Token"
+                    label="Token B"
                     variant="outlined"
-                    InputProps={{ ...params.InputProps, sx: { color: "#fff" } }}
+                    InputProps={{
+                      ...params.InputProps,
+                      sx: { color: "#fff" },
+                    }}
                   />
                 )}
               />
             </Stack>
-
             <Typography variant="h6" sx={{ mb: 2, color: "#fff" }}>
               Fee tier
             </Typography>
             <Typography variant="body2" sx={{ mb: 2, color: "#aaa" }}>
-              The amount earned providing liquidity. Choose what suits your strategy.
+              The % you will earn in fees
             </Typography>
             <Box
               sx={{
@@ -420,52 +368,36 @@ export default function CreatePoolPage() {
                 justifyContent: "space-between",
                 p: 2,
                 bgcolor: "#1a1a1a",
-                border: "1px solid #333",
-                borderRadius: 2,
                 mb: 3,
+                borderRadius: 2,
+                border: "1px solid #333",
               }}
             >
-              <Box>
-                <Typography variant="subtitle2" color="#fff">
-                  {selectedFeeTier} fee tier
-                </Typography>
-                <Typography variant="caption" color="#aaa">
-                  The % you will earn in fees
-                </Typography>
-              </Box>
-              <IconButton size="small" onClick={handleToggleExpand}>
+              <Typography variant="subtitle2" color="#fff">
+                {selectedFeeTier}
+              </Typography>
+              <IconButton size="small" onClick={() => setIsExpanded((x) => !x)}>
                 {isExpanded ? <FiChevronUp color="#fff" /> : <FiChevronDown color="#fff" />}
               </IconButton>
             </Box>
             {isExpanded && (
               <Grid container spacing={2} sx={{ mb: 3 }}>
-                {feeTiers.map((fee) => (
-                  <Grid item xs={6} key={fee.tier}>
+                {feeTiers.map((f) => (
+                  <Grid item xs={6} key={f.tier}>
                     <Card
-                      onClick={() => setSelectedFeeTier(fee.tier)}
+                      onClick={() => setSelectedFeeTier(f.tier)}
                       sx={{
                         p: 2,
                         cursor: "pointer",
                         borderRadius: 2,
-                        bgcolor:
-                          selectedFeeTier === fee.tier ? "#0d0d0d" : "#1a1a1a",
                         border:
-                          selectedFeeTier === fee.tier
-                            ? "2px solid #00d4ff"
-                            : "1px solid #333",
+                          selectedFeeTier === f.tier ? "2px solid #00d4ff" : "1px solid #333",
+                        bgcolor: selectedFeeTier === f.tier ? "#0d0d0d" : "#1a1a1a",
                       }}
                     >
-                      <Typography variant="subtitle2" color="#fff">
-                        {fee.tier}
-                      </Typography>
-                      <Typography variant="body2" color="#aaa" sx={{ mt: 1 }}>
-                        {fee.description}
-                      </Typography>
-                      <Typography variant="caption" color="#aaa" sx={{ display: "block", mt: 1 }}>
-                        {fee.tvl}
-                      </Typography>
-                      <Typography variant="caption" color="#aaa">
-                        {fee.select}
+                      <Typography color="#fff">{f.tier}</Typography>
+                      <Typography variant="body2" color="#aaa">
+                        {f.description}
                       </Typography>
                     </Card>
                   </Grid>
@@ -483,29 +415,41 @@ export default function CreatePoolPage() {
           </>
         ) : (
           <>
-            {/* Deposit */}
+            {/* DEPOSIT */}
             <IconButton onClick={() => setStep(0)} sx={{ mb: 2 }}>
               <FiArrowLeft color="#fff" />
             </IconButton>
-            <Typography variant="h6" sx={{ mb: 2, color: "#fff" }}>
+            <Typography variant="h6" sx={{ mb: 1, color: "#fff" }}>
               Deposit tokens
             </Typography>
-            <Box sx={{ mb: 2 }}>
-              <TextField
-                fullWidth
-                value={ethAmount}
-                onChange={(e) => setEthAmount(e.target.value)}
-                sx={{ mb: 1, border: "1px solid gray", borderRadius: 2 }}
-              />
-            </Box>
-            <Box sx={{ mb: 2 }}>
-              <TextField
-                fullWidth
-                value={usdtAmount}
-                onChange={(e) => setUsdtAmount(e.target.value)}
-                sx={{ mb: 1, border: "1px solid gray", borderRadius: 2 }}
-              />
-            </Box>
+            <Typography sx={{ mb: 2, fontSize: 14, color: "gray" }}>
+              Specify the token amounts for your liquidity contribution.
+            </Typography>
+            <Typography variant="body2" color="#ccc" sx={{ mb: 2 }}>
+              1 {tokenA === "native" ? "DIAM" : tokenA.split(":")[0]} = {livePrice}{" "}
+              {assetCode}
+            </Typography>
+
+            <TextField
+              fullWidth
+              label="Token A amount"
+              value={ethAmount}
+              onChange={(e) => {
+                lastEdited.current = "A";
+                setEthAmount(e.target.value.replace(/[^0-9.]/g, ""));
+              }}
+              sx={{ mb: 2 }}
+            />
+            <TextField
+              fullWidth
+              label="Token B amount"
+              value={usdtAmount}
+              onChange={(e) => {
+                lastEdited.current = "B";
+                setUsdtAmount(e.target.value.replace(/[^0-9.]/g, ""));
+              }}
+              sx={{ mb: 3 }}
+            />
             <CustomButton
               fullWidth
               variant="contained"
@@ -523,7 +467,7 @@ export default function CreatePoolPage() {
         onClose={() => setModalOpen(false)}
         status={transactionStatus}
         message={transactionMessage}
-        transactionHash={transactionHash}  
+        transactionHash={transactionHash}
       />
     </Container>
   );
