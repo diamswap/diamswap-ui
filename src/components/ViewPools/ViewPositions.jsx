@@ -17,40 +17,48 @@ import {
 import { Aurora, TransactionBuilder, Operation, BASE_FEE } from "diamnet-sdk";
 import { Buffer } from "buffer";
 import LiquidityActionModal from "../LiquidityActionModal";
+import ClaimFeesModal from "../ClaimFeesModal";
 import TransactionModal from "../../comman/TransactionModal";
-import { IoAddCircleOutline, IoRemoveCircleOutline } from "react-icons/io5";
+import {
+  IoAddCircleOutline,
+  IoRemoveCircleOutline,
+  IoCashOutline,
+} from "react-icons/io5";
 
 if (!window.Buffer) window.Buffer = Buffer;
+
 const NETWORK_PASSPHRASE = "Diamante Testnet 2024";
 const server = new Aurora.Server("https://diamtestnet.diamcircle.io/");
 
-const FULL_RANGE_MIN = "0";
-const FULL_RANGE_MAX = "1000000000";
-const FULL_MIN = { numerator: 0, denominator: 1 };
-const FULL_MAX = { numerator: 1_000_000_000, denominator: 1 };
+// Helpers
 const codeOf = (asset) =>
   asset === "native" ? "DIAM" : (asset || "").split(":")[0];
+// Price range placeholders
+const FULL_MIN = { n: 1, d: 10000000 };
+const FULL_MAX = { n: 1000000000, d: 1 };
 
-// ---------------------------------------------------------------
 export default function ViewPosition() {
   const walletId = localStorage.getItem("diamPublicKey");
-
+  const [claimableFees, setClaimableFees] = useState(null);
+  // State
   const [lpBalances, setLpBalances] = useState([]);
   const [poolMeta, setPoolMeta] = useState({});
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  // modal / tx dialogs
   const [modalOpen, setModalOpen] = useState(false);
-  const [actionMode, setActionMode] = useState(""); // deposit | withdraw
+  const [actionMode, setActionMode] = useState(""); // "deposit" | "withdraw"
   const [selected, setSelected] = useState(null);
+
+  const [claimOpen, setClaimOpen] = useState(false);
 
   const [txModalOpen, setTxModalOpen] = useState(false);
   const [txStatus, setTxStatus] = useState("");
   const [txMessage, setTxMessage] = useState("");
   const [txHash, setTxHash] = useState("");
 
-  // ---------- fetchers ----------
+  // Fetch LP balances
   const fetchPools = useCallback(async () => {
     if (!walletId) return;
     setLoading(true);
@@ -67,13 +75,14 @@ export default function ViewPosition() {
     }
   }, [walletId]);
 
+  // Fetch pool metadata
   const fetchPoolMeta = useCallback(async () => {
     if (!walletId) return;
     try {
-      const r = await fetch(
+      const res = await fetch(
         `https://diamtestnet.diamcircle.io/liquidity_pools/?${walletId}=&limit=200`
       );
-      const j = await r.json();
+      const j = await res.json();
       const map = {};
       j._embedded?.records.forEach((rec) => {
         map[rec.id] = rec;
@@ -89,18 +98,37 @@ export default function ViewPosition() {
     fetchPoolMeta();
   }, [fetchPools, fetchPoolMeta]);
 
+  // Open deposit/withdraw modal
   const openModal = (pool, mode) => {
     setSelected(pool);
     setActionMode(mode);
     setModalOpen(true);
   };
 
-  // ---------- submit tx ----------
-  async function handleLiquidityAction(poolId, amtA, amtB, minPrice, maxPrice) {
-    console.log("minPrice", minPrice)
+  // Open claim-fees modal
+  const openClaim = (pool) => {
+    setSelected(pool);
+    setClaimOpen(true);
+  };
+
+  // Handle deposit or withdraw
+  const handleLiquidityAction = async (
+    poolId,
+    amtA,
+    amtB,
+    minPrice,
+    maxPrice
+  ) => {
+    if (!poolId) {
+      setError("No pool selected");
+      return;
+    }
+
     setTxModalOpen(true);
     setTxStatus("pending");
-    setTxMessage(`${actionMode} in progress…`);
+    setTxMessage(
+      `${actionMode.charAt(0).toUpperCase() + actionMode.slice(1)} in progress…`
+    );
     setTxHash("");
 
     try {
@@ -112,6 +140,7 @@ export default function ViewPosition() {
       });
 
       if (actionMode === "deposit") {
+        // Add liquidity
         txb.addOperation(
           Operation.liquidityPoolDeposit({
             liquidityPoolId: poolIdBuf,
@@ -121,19 +150,22 @@ export default function ViewPosition() {
             maxPrice,
           })
         );
-      } else {
-        // -------- withdraw: compute minAmountA/B with 0.5 % slippage --------
-        const pool = await server
+      } else if (actionMode === "withdraw") {
+        // Remove liquidity: burn amtA shares
+        const poolRec = await server
           .liquidityPools()
           .liquidityPoolId(poolId)
           .call();
-        const [r0, r1] = pool.reserves;
+        const [r0, r1] = poolRec.reserves;
         const reserveA = parseFloat(r0.amount);
         const reserveB = parseFloat(r1.amount);
-        const total = parseFloat(pool.total_shares);
-        const share = parseFloat(amtA) / total;
-        const expA = reserveA * share;
-        const expB = reserveB * share;
+        const totalShares = parseFloat(poolRec.total_shares);
+        const shareAmt = parseFloat(amtA);
+        const shareRatio = shareAmt / totalShares;
+        // Expected principal amounts
+        const expA = reserveA * shareRatio;
+        const expB = reserveB * shareRatio;
+        // 0.5% slippage tolerance
         const SLIP = 0.005;
         const minA = (expA * (1 - SLIP)).toFixed(7);
         const minB = (expB * (1 - SLIP)).toFixed(7);
@@ -158,11 +190,87 @@ export default function ViewPosition() {
       fetchPools();
     } catch (e) {
       setTxStatus("error");
-      setTxMessage(e.message || "Transaction failed");
+      // parse result_codes if available
+      const code = e.extras?.result_codes?.operations?.[0];
+      let msg = e.message;
+      if (code === "op_underfunded") msg = "Insufficient balance";
+      setTxMessage(msg || "Transaction failed");
+    } finally {
+      setModalOpen(false);
     }
-  }
+  };
 
-  // ---------- UI ----------
+  // Handle claim fees by withdraw+redeposit principal
+  const handleConfirmClaim = async (poolIdStr) => {
+    if (!poolIdStr || !selected) {
+      setTxModalOpen(true);
+      setTxStatus("error");
+      setTxMessage("Invalid pool selection");
+      return;
+    }
+
+    setTxModalOpen(true);
+    setTxStatus("pending");
+    setTxMessage("Claim in progress…");
+    setTxHash("");
+
+    try {
+      const poolRec = await server
+        .liquidityPools()
+        .liquidityPoolId(poolIdStr)
+        .call();
+      const [r0, r1] = poolRec.reserves;
+      const reserveA = parseFloat(r0.amount);
+      const reserveB = parseFloat(r1.amount);
+      const totalShares = parseFloat(poolRec.total_shares);
+      const shareAmt = parseFloat(selected.balance);
+      const shareRatio = shareAmt / totalShares;
+      const principalA = (reserveA * shareRatio).toFixed(7);
+      const principalB = (reserveB * shareRatio).toFixed(7);
+
+      const account = await server.loadAccount(walletId);
+      const txb = new TransactionBuilder(account, {
+        fee: BASE_FEE,
+        networkPassphrase: NETWORK_PASSPHRASE,
+      });
+
+      const poolIdBuf = new Uint8Array(Buffer.from(poolIdStr, "hex"));
+      // 1) withdraw full share (principal + fees)
+      txb.addOperation(
+        Operation.liquidityPoolWithdraw({
+          liquidityPoolId: poolIdBuf,
+          amount: selected.balance,
+          minAmountA: "0",
+          minAmountB: "0",
+        })
+      );
+      // 2) redeposit principal only
+      txb.addOperation(
+        Operation.liquidityPoolDeposit({
+          liquidityPoolId: poolIdBuf,
+          maxAmountA: principalA,
+          maxAmountB: principalB,
+          minPrice: FULL_MIN,
+          maxPrice: FULL_MAX,
+        })
+      );
+
+      const tx = txb.setTimeout(100).build();
+      await window.diam.sign(tx.toXDR(), true, NETWORK_PASSPHRASE);
+      const resp = await server.submitTransaction(tx);
+
+      setTxStatus("success");
+      setTxMessage("Fees claimed successfully!");
+      setTxHash(resp.hash);
+      fetchPools();
+    } catch (e) {
+      setTxStatus("error");
+      setTxMessage(e.message || "Claim failed");
+    } finally {
+      setClaimOpen(false);
+    }
+  };
+
   return (
     <Box sx={{ minHeight: "100vh", bgcolor: "#0A1B1F", color: "#fff", py: 4 }}>
       <Container maxWidth="lg">
@@ -180,7 +288,7 @@ export default function ViewPosition() {
             <CircularProgress size={48} />
           </Box>
         ) : lpBalances.length === 0 ? (
-          <Typography mt={4}>No liquidity‑pool shares found.</Typography>
+          <Typography mt={4}>No liquidity-pool shares found.</Typography>
         ) : (
           <TableContainer
             component={Paper}
@@ -194,7 +302,7 @@ export default function ViewPosition() {
                     "Pool ID",
                     "Tokens",
                     "Reserves",
-                    "Total LP",
+                    "Total LP",
                     "Balance",
                     "%",
                     "Actions",
@@ -245,7 +353,7 @@ export default function ViewPosition() {
                         {aA}/{aB}
                       </TableCell>
                       <TableCell>
-                        {resA} {aA} | {resB} {aB}
+                        {resA} {aA} | {resB} {aB}
                       </TableCell>
                       <TableCell>{total}</TableCell>
                       <TableCell>{yours}</TableCell>
@@ -256,7 +364,8 @@ export default function ViewPosition() {
                           sx={{ color: "#4caf50" }}
                           onClick={() => openModal(lp, "deposit")}
                         >
-                          <IoAddCircleOutline />
+                          {" "}
+                          <IoAddCircleOutline />{" "}
                         </IconButton>
                         <IconButton
                           size="small"
@@ -264,6 +373,13 @@ export default function ViewPosition() {
                           onClick={() => openModal(lp, "withdraw")}
                         >
                           <IoRemoveCircleOutline />
+                        </IconButton>
+                        <IconButton
+                          size="small"
+                          sx={{ color: "#FFC107" }}
+                          onClick={() => openClaim(lp)}
+                        >
+                          <IoCashOutline />
                         </IconButton>
                       </TableCell>
                     </TableRow>
@@ -274,7 +390,6 @@ export default function ViewPosition() {
           </TableContainer>
         )}
 
-        {/* modals */}
         <LiquidityActionModal
           open={modalOpen}
           mode={actionMode}
@@ -302,6 +417,13 @@ export default function ViewPosition() {
           }
           onClose={() => setModalOpen(false)}
           onAction={handleLiquidityAction}
+        />
+
+        <ClaimFeesModal
+          open={claimOpen}
+          poolId={selected?.liquidity_pool_id}
+          onClose={() => setClaimOpen(false)}
+          onConfirm={handleConfirmClaim}
         />
 
         <TransactionModal
