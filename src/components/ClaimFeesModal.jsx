@@ -22,6 +22,8 @@ export default function ClaimFeesModal({
   onClose,
   onConfirm,
 }) {
+
+  console.log("claimableFees",claimableFees)
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -96,7 +98,7 @@ export default function ClaimFeesModal({
         {/* Confirm Button */}
         <CustomButton
           onClick={handleConfirm}
-          disabled={loading || !claimableFees}
+          disabled={loading}
           fullWidth
         >
           {loading ? <CircularProgress size={20} color="inherit" /> : "Confirm Claim"}

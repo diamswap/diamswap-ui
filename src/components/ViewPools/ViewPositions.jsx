@@ -76,11 +76,13 @@ export default function ViewPosition() {
   }, [walletId]);
 
   // Fetch pool metadata
+  // Fetch pool metadata
   const fetchPoolMeta = useCallback(async () => {
     if (!walletId) return;
     try {
+      // ✅ Use account_id to filter by your wallet
       const res = await fetch(
-        `https://diamtestnet.diamcircle.io/liquidity_pools/?${walletId}=&limit=200`
+        `https://diamtestnet.diamcircle.io/liquidity_pools?account_id=${walletId}&limit=200`
       );
       const j = await res.json();
       const map = {};
@@ -89,9 +91,10 @@ export default function ViewPosition() {
       });
       setPoolMeta(map);
     } catch (e) {
-      console.error(e);
+      console.error("Failed to load pool metadata", e);
     }
   }, [walletId]);
+
 
   useEffect(() => {
     fetchPools();
@@ -105,11 +108,84 @@ export default function ViewPosition() {
     setModalOpen(true);
   };
 
-  // Open claim-fees modal
+
+
+  const ASSET_DECIMALS = {
+    native: 7,    // DIAM has 7 decimal places
+  };
+  
+  function getDecimals(asset) {
+    if (asset === "native") return ASSET_DECIMALS.native;
+    const symbol = asset.split(":")[0];
+    return ASSET_DECIMALS[symbol] ?? ASSET_DECIMALS.native;
+  }
+  
+  // 2️⃣ Compute “claimable fees” from on-chain reserves + user LP balance
+  const fetchClaimableFees = useCallback(
+    (pool) => {
+      // reset if no data
+      if (!walletId || !pool || !poolMeta) {
+        setClaimableFees(null);
+        return;
+      }
+  
+      const { liquidity_pool_id: poolId, balance: userBal } = pool;
+      const meta = poolMeta[poolId];
+      if (!meta || !Array.isArray(meta.reserves) || meta.reserves.length < 2) {
+        setClaimableFees(null);
+        return;
+      }
+  
+      const [r0meta, r1meta] = meta.reserves;
+      const r0 = Number(r0meta.amount);
+      const r1 = Number(r1meta.amount);
+      const totalShares = Number(meta.total_shares);
+      const userShares  = Number(userBal);
+  
+      // derive decimals and codes
+      const dec0 = getDecimals(r0meta.asset);
+      const dec1 = getDecimals(r1meta.asset);
+      const codeA = codeOf(r0meta.asset);
+      const codeB = codeOf(r1meta.asset);
+  
+      // no shares or no deposits => zero fees
+      if (!totalShares || !userShares) {
+        setClaimableFees({
+          feeA: "0".padEnd(dec0 + 1, "0"),
+          feeB: "0".padEnd(dec1 + 1, "0"),
+          codeA,
+          codeB,
+        });
+        return;
+      }
+  
+      // principal = your pro-rata share of reserves
+      const principalA = (r0 * userShares) / totalShares;
+      const principalB = (r1 * userShares) / totalShares;
+      // fees = leftover
+      const feeA = r0 - principalA;
+      const feeB = r1 - principalB;
+  
+      setClaimableFees({
+        feeA: feeA.toFixed(dec0),
+        feeB: feeB.toFixed(dec1),
+        codeA,
+        codeB,
+      });
+    },
+    [walletId, poolMeta]
+  );
+  
+  // 3️⃣ When user clicks “claim”, compute fees and open the modal
   const openClaim = (pool) => {
+    if (!pool) return;
     setSelected(pool);
+    fetchClaimableFees(pool);
     setClaimOpen(true);
   };
+
+
+
 
   // Handle deposit or withdraw
   const handleLiquidityAction = async (
@@ -263,6 +339,8 @@ export default function ViewPosition() {
       setTxMessage("Fees claimed successfully!");
       setTxHash(resp.hash);
       fetchPools();
+     await fetchPoolMeta();
+     fetchClaimableFees(selected);
     } catch (e) {
       setTxStatus("error");
       setTxMessage(e.message || "Claim failed");
@@ -422,8 +500,13 @@ export default function ViewPosition() {
         <ClaimFeesModal
           open={claimOpen}
           poolId={selected?.liquidity_pool_id}
-          onClose={() => setClaimOpen(false)}
           onConfirm={handleConfirmClaim}
+                    claimableFees={claimableFees}    // ← pass it here
+          onClose={() => {
+            setClaimOpen(false);
+            setClaimableFees(null);         // clear when closing
+          }}
+
         />
 
         <TransactionModal
