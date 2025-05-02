@@ -1,5 +1,5 @@
-// src/components/ViewPools/index.jsx
-import React, { useState, useEffect } from "react";
+// src/components/ViewPosition/index.jsx
+import React, { useState, useEffect, useCallback } from "react";
 import {
   Container,
   Box,
@@ -13,105 +13,191 @@ import {
   TableRow,
   TableCell,
   TableBody,
-  TablePagination,
-  TextField,
+  IconButton,
+  Accordion,
+  AccordionSummary,
+  AccordionDetails,
   Tooltip,
+  Stack,
+  Fade,
 } from "@mui/material";
-import { Aurora, TransactionBuilder, Operation, BASE_FEE } from "diamnet-sdk";
+import {
+  Aurora,
+  TransactionBuilder,
+  Operation,
+  BASE_FEE,
+  Asset,
+  LiquidityPoolAsset,
+} from "diamnet-sdk";
 import { Buffer } from "buffer";
 import LiquidityActionModal from "../LiquidityActionModal";
+import ClaimFeesModal from "../ClaimFeesModal";
 import TransactionModal from "../../comman/TransactionModal";
+import {
+  IoAddCircleOutline,
+  IoRemoveCircleOutline,
+  IoCashOutline,
+} from "react-icons/io5";
 
 if (!window.Buffer) window.Buffer = Buffer;
 
 const NETWORK_PASSPHRASE = "Diamante Testnet 2024";
 const server = new Aurora.Server("https://diamtestnet.diamcircle.io/");
 
-function extractTokenCode(assetStr) {
-  if (!assetStr) return "";
-  return assetStr === "native" ? "DIAM" : assetStr.split(":")[0];
-}
+// Helpers
+const codeOf = (asset) => (asset === "native" ? "DIAM" : asset.split(":")[0]);
+const FULL_MIN = { n: 1, d: 10000000 };
+const FULL_MAX = { n: 1000000000, d: 1 };
 
-export default function ViewPools() {
+export default function ViewPosition() {
   const walletId = localStorage.getItem("diamPublicKey");
 
-  // --- data states ---
-  const [allPools, setAllPools] = useState([]);      // all pools fetched
-  const [userShares, setUserShares] = useState({});  // your LP shares map
+  // All pools & user shares
+  const [allPools, setAllPools] = useState([]);
+  const [userShares, setUserShares] = useState({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  // --- pagination & filter ---
-  const [page, setPage] = useState(0);
-  const [rowsPerPage, setRowsPerPage] = useState(10);
-  const [filterText, setFilterText] = useState("");
-
-  // --- modal states ---
-  const [modalOpen, setModalOpen] = useState(false);
-  const [actionMode, setActionMode] = useState("");
+  // Modals
+  const [actionModalOpen, setActionModalOpen] = useState(false);
+  const [actionMode, setActionMode] = useState(""); // "deposit" | "withdraw"
   const [selectedPool, setSelectedPool] = useState(null);
+
+  const [claimModalOpen, setClaimModalOpen] = useState(false);
+  const [claimableFees, setClaimableFees] = useState(null);
+
   const [txModalOpen, setTxModalOpen] = useState(false);
   const [txStatus, setTxStatus] = useState("");
   const [txMessage, setTxMessage] = useState("");
   const [txHash, setTxHash] = useState("");
 
-  // 1) fetch all pools
-  useEffect(() => {
+  // 1) Fetch ALL pools
+  const fetchPools = useCallback(async () => {
     setLoading(true);
-    fetch("https://diamtestnet.diamcircle.io/liquidity_pools?limit=200")
-      .then((r) => r.json())
-      .then((json) => {
-        setAllPools(json._embedded?.records || []);
-      })
-      .catch((e) => setError(e.message))
-      .finally(() => setLoading(false));
+    setError("");
+    try {
+      const res = await fetch(
+        "https://diamtestnet.diamcircle.io/liquidity_pools?limit=200"
+      );
+      const json = await res.json();
+      setAllPools(json._embedded?.records || []);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
-  // 2) fetch your wallet's LP balances once
-  useEffect(() => {
+  // 2) Fetch user's LP-share balances
+  const fetchUserShares = useCallback(async () => {
     if (!walletId) return;
-    server
-      .loadAccount(walletId)
-      .then((acct) => {
-        const map = {};
-        acct.balances
-          .filter((b) => b.asset_type === "liquidity_pool_shares")
-          .forEach((b) => {
-            map[b.liquidity_pool_id] = parseFloat(b.balance);
-          });
-        setUserShares(map);
-      })
-      .catch((e) => console.error(e));
+    try {
+      const acct = await server.loadAccount(walletId);
+      const map = {};
+      acct.balances
+        .filter((b) => b.asset_type === "liquidity_pool_shares")
+        .forEach((b) => (map[b.liquidity_pool_id] = parseFloat(b.balance)));
+      setUserShares(map);
+    } catch (e) {
+      console.error("Error loading user shares:", e);
+    }
   }, [walletId]);
 
-  // open action modal
-  function openLiquidityModal(pool, mode) {
+  useEffect(() => {
+    fetchPools();
+    fetchUserShares();
+  }, [fetchPools, fetchUserShares]);
+
+  // Compute claimable fees
+  const computeFees = useCallback(
+    (pool) => {
+      if (!pool || !userShares[pool.id]) {
+        setClaimableFees(null);
+        return;
+      }
+      const shareAmt = userShares[pool.id];
+      const { reserves, total_shares: totalSharesStr } = pool;
+      const totalShares = parseFloat(totalSharesStr);
+      if (!totalShares || !shareAmt) {
+        setClaimableFees({
+          feeA: "0.0000000",
+          feeB: "0.0000000",
+          codeA: codeOf(reserves[0].asset),
+          codeB: codeOf(reserves[1].asset),
+        });
+        return;
+      }
+      const [r0, r1] = reserves;
+      const a0 = parseFloat(r0.amount),
+        a1 = parseFloat(r1.amount);
+      const princ0 = (a0 * shareAmt) / totalShares;
+      const princ1 = (a1 * shareAmt) / totalShares;
+      const fee0 = (a0 - princ0).toFixed(7),
+        fee1 = (a1 - princ1).toFixed(7);
+      setClaimableFees({
+        feeA: fee0,
+        feeB: fee1,
+        codeA: codeOf(r0.asset),
+        codeB: codeOf(r1.asset),
+      });
+    },
+    [userShares]
+  );
+
+  // Open deposit/withdraw modal
+  const openActionModal = (pool, mode) => {
     setSelectedPool(pool);
     setActionMode(mode);
-    setModalOpen(true);
-  }
+    setActionModalOpen(true);
+  };
 
-  // perform deposit/withdraw
-  async function handleLiquidityAction(pool, amtA, amtB) {
+  // Open claim-fees modal
+  const openClaimModal = (pool) => {
+    setSelectedPool(pool);
+    computeFees(pool);
+    setClaimModalOpen(true);
+  };
+
+  // Handle deposit/withdraw
+  const handleLiquidityAction = async (poolId, amtA, amtB, minP, maxP) => {
     setTxModalOpen(true);
     setTxStatus("pending");
-    setTxMessage(`${actionMode} in progress...`);
+    setTxMessage(
+      `${actionMode.charAt(0).toUpperCase() + actionMode.slice(1)} in progress…`
+    );
     setTxHash("");
+
     try {
-      const poolIdBuf = new Uint8Array(Buffer.from(pool.id, "hex"));
       const acct = await server.loadAccount(walletId);
       const txb = new TransactionBuilder(acct, {
         fee: BASE_FEE,
         networkPassphrase: NETWORK_PASSPHRASE,
       });
+
+      // Ensure trustline for LP shares
+      const lpPool = allPools.find((p) => p.id === poolId);
+      const [r0, r1] = lpPool.reserves;
+      const assetA =
+        r0.asset === "native"
+          ? Asset.native()
+          : new Asset(...r0.asset.split(":"));
+      const assetB =
+        r1.asset === "native"
+          ? Asset.native()
+          : new Asset(...r1.asset.split(":"));
+      const lpAsset = new LiquidityPoolAsset(assetA, assetB, lpPool.fee_bp);
+
+      txb.addOperation(Operation.changeTrust({ asset: lpAsset }));
+
+      const poolIdBuf = new Uint8Array(Buffer.from(poolId, "hex"));
       if (actionMode === "deposit") {
         txb.addOperation(
           Operation.liquidityPoolDeposit({
             liquidityPoolId: poolIdBuf,
             maxAmountA: amtA,
             maxAmountB: amtB,
-            minPrice: { n: 1, d: 2 },
-            maxPrice: { n: 2, d: 1 },
+            minPrice: minP,
+            maxPrice: maxP,
           })
         );
       } else {
@@ -124,109 +210,134 @@ export default function ViewPools() {
           })
         );
       }
+
       const tx = txb.setTimeout(100).build();
       await window.diam.sign(tx.toXDR(), true, NETWORK_PASSPHRASE);
       const resp = await server.submitTransaction(tx);
+
       setTxStatus("success");
       setTxMessage("Transaction successful!");
       setTxHash(resp.hash);
-      // refresh your LP share balance for this pool
-      const refreshed = await server.loadAccount(walletId);
-      const map2 = {};
-      refreshed.balances
-        .filter((b) => b.asset_type === "liquidity_pool_shares")
-        .forEach((b) => {
-          map2[b.liquidity_pool_id] = parseFloat(b.balance);
-        });
-      setUserShares(map2);
+      fetchUserShares();
     } catch (e) {
       setTxStatus("error");
-      setTxMessage(e.message || "Transaction failed");
+      const code = e.extras?.result_codes?.operations?.[0];
+      setTxMessage(code === "op_underfunded" ? "Insufficient balance" : e.message);
+    } finally {
+      setActionModalOpen(false);
     }
-  }
+  };
 
-  // filter + paginate
-  const filtered = allPools.filter((p) => {
-    const [r0, r1] = p.reserves;
-    const pair = `${extractTokenCode(r0.asset)}/${extractTokenCode(r1.asset)}`;
-    return pair.toLowerCase().includes(filterText.toLowerCase());
-  });
-  const paged = filtered.slice(
-    page * rowsPerPage,
-    page * rowsPerPage + rowsPerPage
-  );
+  // Handle claim fees (withdraw + redeposit principal)
+  const handleConfirmClaim = async (poolId) => {
+    setTxModalOpen(true);
+    setTxStatus("pending");
+    setTxMessage("Claim in progress…");
+    setTxHash("");
+
+    try {
+      const poolRec = await server
+        .liquidityPools()
+        .liquidityPoolId(poolId)
+        .call();
+      const [ra, rb] = poolRec.reserves;
+      const reserveA = parseFloat(ra.amount);
+      const reserveB = parseFloat(rb.amount);
+      const total = parseFloat(poolRec.total_shares);
+      const shareAmt = userShares[poolId] || 0;
+      const ratio = shareAmt / total;
+      const pA = (reserveA * ratio).toFixed(7);
+      const pB = (reserveB * ratio).toFixed(7);
+
+      const acct = await server.loadAccount(walletId);
+      const txb = new TransactionBuilder(acct, {
+        fee: BASE_FEE,
+        networkPassphrase: NETWORK_PASSPHRASE,
+      });
+      const poolIdBuf = new Uint8Array(Buffer.from(poolId, "hex"));
+
+      txb.addOperation(
+        Operation.liquidityPoolWithdraw({
+          liquidityPoolId: poolIdBuf,
+          amount: shareAmt.toString(),
+          minAmountA: "0",
+          minAmountB: "0",
+        })
+      );
+      txb.addOperation(
+        Operation.liquidityPoolDeposit({
+          liquidityPoolId: poolIdBuf,
+          maxAmountA: pA,
+          maxAmountB: pB,
+          minPrice: FULL_MIN,
+          maxPrice: FULL_MAX,
+        })
+      );
+
+      const tx = txb.setTimeout(100).build();
+      await window.diam.sign(tx.toXDR(), true, NETWORK_PASSPHRASE);
+      const resp = await server.submitTransaction(tx);
+
+      setTxStatus("success");
+      setTxMessage("Fees claimed successfully!");
+      setTxHash(resp.hash);
+      fetchUserShares();
+      computeFees(selectedPool);
+    } catch (e) {
+      setTxStatus("error");
+      setTxMessage(e.message);
+    } finally {
+      setClaimModalOpen(false);
+    }
+  };
 
   return (
-    <Box sx={{ minHeight: "100vh", bgcolor: "#0A1B1F", color: "#FFF", py: 4 }}>
+    <Box sx={{ minHeight: "100vh", bgcolor: "#0A1B1F", color: "#fff", py: 4 }}>
       <Container maxWidth="lg">
-        <Box
-          sx={{
-            display: "flex",
-            flexWrap: "wrap",
-            gap: 2,
-            alignItems: "center",
-            justifyContent: "space-between",
-            mb: 2,
-          }}
+        <Stack
+          direction="row"
+          justifyContent="space-between"
+          alignItems="center"
+          mb={3}
         >
-          <Typography variant="h4">Liquidity Pools</Typography>
-          <TextField
-            placeholder="Filter pairs…"
-            size="small"
-            value={filterText}
-            onChange={(e) => {
-              setFilterText(e.target.value);
-              setPage(0);
-            }}
-            sx={{
-              backgroundColor: "#14232E",
-              input: { color: "#FFF" },
-              width: 200,
-            }}
-          />
-          <Button
-            variant="outlined"
-            onClick={() => window.location.reload()}
-            disabled={loading}
-          >
-            {loading ? <CircularProgress size={20} /> : "Reload All"}
+          <Typography variant="h4">All Liquidity Pools</Typography>
+          <Button variant="outlined" onClick={fetchPools} disabled={loading}>
+            {loading ? <CircularProgress size={20} /> : "Refresh"}
           </Button>
-        </Box>
+        </Stack>
 
-        {error && (
-          <Typography color="error" sx={{ mb: 2 }}>
-            {error}
-          </Typography>
-        )}
+        {error && <Typography color="error">{error}</Typography>}
 
         {loading ? (
           <Box textAlign="center" mt={6}>
             <CircularProgress size={48} />
           </Box>
         ) : (
-          <Paper sx={{ overflow: "hidden", borderRadius: 2 }}>
-            <TableContainer sx={{ maxHeight: 600, bgcolor: "#14232E" }}>
+          <Fade in>
+            <TableContainer
+              component={Paper}
+              sx={{ bgcolor: "#14232E", borderRadius: 2 }}
+            >
               <Table stickyHeader size="small">
                 <TableHead>
-                  <TableRow sx={{ backgroundColor: "#0E2429" }}>
+                  <TableRow sx={{ bgcolor: "#0E2429" }}>
                     {[
                       "#",
                       "Pool ID",
                       "Tokens",
                       "Reserves",
                       "Total LP",
-                      "Participants",
-                      "Your Bal.",
-                      "Your %",
+                      "Your Shares",
+                      "%",
+                      "Actions",
                     ].map((h, i) => (
                       <TableCell
-                        key={i}
+                        key={h}
                         align={i === 0 || i === 7 ? "center" : "left"}
                         sx={{
-                          color: "#FFF",
+                          color: "#fff",
                           fontWeight: "bold",
                           borderBottom: "none",
-                          py: 1.5,
                         }}
                       >
                         {h}
@@ -235,20 +346,16 @@ export default function ViewPools() {
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {paged.map((p, idx) => {
-                    const [r0, r1] = p.reserves;
-                    const aA = extractTokenCode(r0.asset);
-                    const aB = extractTokenCode(r1.asset);
-                    const resA = parseFloat(r0.amount).toFixed(4);
-                    const resB = parseFloat(r1.amount).toFixed(4);
-                    const total = parseFloat(p.total_shares).toFixed(4);
-                    const yours = (userShares[p.id] || 0).toFixed(4);
+                  {allPools.map((p, idx) => {
+                    const [r0, r1] = p.reserves || [];
+                    const aA = codeOf(r0?.asset);
+                    const aB = codeOf(r1?.asset);
+                    const resA = parseFloat(r0?.amount || 0).toFixed(6);
+                    const resB = parseFloat(r1?.amount || 0).toFixed(6);
+                    const total = parseFloat(p.total_shares || 0).toFixed(6);
+                    const yours = (userShares[p.id] || 0).toFixed(6);
                     const pct =
-                      p.total_shares > 0
-                        ? ((yours / parseFloat(p.total_shares)) * 100).toFixed(
-                            2
-                          )
-                        : "0.00";
+                      total > 0 ? ((yours / total) * 100).toFixed(2) : "0.00";
 
                     return (
                       <TableRow
@@ -258,31 +365,53 @@ export default function ViewPools() {
                           "&:hover": { bgcolor: "#1A2A34" },
                         }}
                       >
-                        <TableCell align="center" sx={{ color: "#CCC" }}>
-                          {page * rowsPerPage + idx + 1}
+                        <TableCell align="center" sx={{ color: "#ccc" }}>
+                          {idx + 1}
                         </TableCell>
                         <TableCell
-                          sx={{ color: "#FFF", wordBreak: "break-all" }}
+                          sx={{ wordBreak: "break-all", color: "#fff" }}
                         >
-                          <Tooltip title={p.id}>
-                            <span>
-                              {p.id.slice(0, 3)}…{p.id.slice(-3)}
-                            </span>
-                          </Tooltip>
+                          {p.id.slice(0, 6)}…{p.id.slice(-6)}
                         </TableCell>
-                        <TableCell sx={{ color: "#FFF" }}>
-                          {aA} / {aB}
+                        <TableCell sx={{ color: "#fff" }}>
+                          {aA}/{aB}
                         </TableCell>
-                        <TableCell sx={{ color: "#FFF", whiteSpace: "nowrap" }}>
-                          {`${resA} ${aA} | ${resB} ${aB}`}
+                        <TableCell sx={{ color: "#fff" }}>
+                          {resA} {aA} | {resB} {aB}
                         </TableCell>
-                        <TableCell sx={{ color: "#FFF" }}>{total}</TableCell>
-                        <TableCell sx={{ color: "#FFF" }}>
-                          {p.total_trustlines}
-                        </TableCell>
-                        <TableCell sx={{ color: "#FFF" }}>{yours}</TableCell>
-                        <TableCell align="center" sx={{ color: "#FFF" }}>
+                        <TableCell sx={{ color: "#fff" }}>{total}</TableCell>
+                        <TableCell sx={{ color: "#fff" }}>{yours}</TableCell>
+                        <TableCell align="center" sx={{ color: "#fff" }}>
                           {pct}%
+                        </TableCell>
+                        <TableCell align="center">
+                          <Tooltip title="Deposit">
+                            <IconButton
+                              size="small"
+                              sx={{ color: "#4caf50" }}
+                              onClick={() => openActionModal(p, "deposit")}
+                            >
+                              <IoAddCircleOutline />
+                            </IconButton>
+                          </Tooltip>
+                          <Tooltip title="Withdraw">
+                            <IconButton
+                              size="small"
+                              sx={{ color: "#f44336" }}
+                              onClick={() => openActionModal(p, "withdraw")}
+                            >
+                              <IoRemoveCircleOutline />
+                            </IconButton>
+                          </Tooltip>
+                          <Tooltip title="Claim Fees">
+                            <IconButton
+                              size="small"
+                              sx={{ color: "#FFC107" }}
+                              onClick={() => openClaimModal(p)}
+                            >
+                              <IoCashOutline />
+                            </IconButton>
+                          </Tooltip>
                         </TableCell>
                       </TableRow>
                     );
@@ -290,35 +419,29 @@ export default function ViewPools() {
                 </TableBody>
               </Table>
             </TableContainer>
-
-            <TablePagination
-              component="div"
-              count={filtered.length}
-              page={page}
-              onPageChange={(_, newPage) => setPage(newPage)}
-              rowsPerPage={rowsPerPage}
-              onRowsPerPageChange={(e) => {
-                setRowsPerPage(parseInt(e.target.value, 10));
-                setPage(0);
-              }}
-              rowsPerPageOptions={[5, 10, 25, 50]}
-              sx={{
-                bgcolor: "#0E2429",
-                ".MuiTablePagination-selectLabel, .MuiTablePagination-displayedRows":
-                  { color: "#FFF" },
-              }}
-            />
-          </Paper>
+          </Fade>
         )}
 
+        {/* Deposit / Withdraw Modal */}
         <LiquidityActionModal
-          open={modalOpen}
+          open={actionModalOpen}
           mode={actionMode}
-          poolId={selectedPool?.id || ""}
-          available={userShares[selectedPool?.id] || 0}
-          onClose={() => setModalOpen(false)}
-          onAction={(amtA, amtB) => handleLiquidityAction(selectedPool, amtA, amtB)}
+          poolId={selectedPool?.id}
+          available={(userShares[selectedPool?.id] || 0).toString()}
+          onClose={() => setActionModalOpen(false)}
+          onAction={handleLiquidityAction}
         />
+
+        {/* Claim Fees Modal */}
+        <ClaimFeesModal
+          open={claimModalOpen}
+          poolId={selectedPool?.id}
+          claimableFees={claimableFees}
+          onConfirm={() => handleConfirmClaim(selectedPool?.id)}
+          onClose={() => setClaimModalOpen(false)}
+        />
+
+        {/* Transaction Status Modal */}
         <TransactionModal
           open={txModalOpen}
           onClose={() => setTxModalOpen(false)}

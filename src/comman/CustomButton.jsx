@@ -1,4 +1,3 @@
-// CustomButton.js
 import React from 'react';
 import { Button } from '@mui/material';
 
@@ -7,7 +6,9 @@ const CustomButton = ({
   fullWidth = true,
   color = "#ccc",
   hoverColor = "#fff",
-  textColor = "000",
+  textColor = "#000",
+  disabledBg = "#000",
+  disabledTextColor = "#888",
   borderRadius = 8,
   py = 1.5,
   onClick,
@@ -25,6 +26,11 @@ const CustomButton = ({
         borderRadius: borderRadius,
         "&:hover": {
           bgcolor: hoverColor,
+        },
+        // Disabled state styling
+        "&.Mui-disabled": {
+          bgcolor: disabledBg,
+          color: disabledTextColor,
         },
       }}
       onClick={onClick}
