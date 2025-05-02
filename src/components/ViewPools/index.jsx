@@ -14,6 +14,12 @@ import {
   TableCell,
   TableBody,
   IconButton,
+  Accordion,
+  AccordionSummary,
+  AccordionDetails,
+  Tooltip,
+  Stack,
+  Fade,
 } from "@mui/material";
 import {
   Aurora,
@@ -39,30 +45,27 @@ const NETWORK_PASSPHRASE = "Diamante Testnet 2024";
 const server = new Aurora.Server("https://diamtestnet.diamcircle.io/");
 
 // Helpers
-const codeOf = (asset) => (asset === "native" ? "DIAM" : (asset || "").split(":")[0]);
-
-// Price range placeholders
+const codeOf = (asset) => (asset === "native" ? "DIAM" : asset.split(":")[0]);
 const FULL_MIN = { n: 1, d: 10000000 };
 const FULL_MAX = { n: 1000000000, d: 1 };
 
 export default function ViewPosition() {
   const walletId = localStorage.getItem("diamPublicKey");
 
-  // All pools
+  // All pools & user shares
   const [allPools, setAllPools] = useState([]);
-  // User's share balances
   const [userShares, setUserShares] = useState({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  // Modal state
-  const [modalOpen, setModalOpen] = useState(false);
+  // Modals
+  const [actionModalOpen, setActionModalOpen] = useState(false);
   const [actionMode, setActionMode] = useState(""); // "deposit" | "withdraw"
   const [selectedPool, setSelectedPool] = useState(null);
 
-  const [claimOpen, setClaimOpen] = useState(false);
+  const [claimModalOpen, setClaimModalOpen] = useState(false);
+  const [claimableFees, setClaimableFees] = useState(null);
 
-  // Tx state
   const [txModalOpen, setTxModalOpen] = useState(false);
   const [txStatus, setTxStatus] = useState("");
   const [txMessage, setTxMessage] = useState("");
@@ -73,9 +76,11 @@ export default function ViewPosition() {
     setLoading(true);
     setError("");
     try {
-      const res = await fetch("https://diamtestnet.diamcircle.io/liquidity_pools?limit=200");
-      const j = await res.json();
-      setAllPools(j._embedded?.records || []);
+      const res = await fetch(
+        "https://diamtestnet.diamcircle.io/liquidity_pools?limit=200"
+      );
+      const json = await res.json();
+      setAllPools(json._embedded?.records || []);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -103,66 +108,96 @@ export default function ViewPosition() {
     fetchUserShares();
   }, [fetchPools, fetchUserShares]);
 
+  // Compute claimable fees
+  const computeFees = useCallback(
+    (pool) => {
+      if (!pool || !userShares[pool.id]) {
+        setClaimableFees(null);
+        return;
+      }
+      const shareAmt = userShares[pool.id];
+      const { reserves, total_shares: totalSharesStr } = pool;
+      const totalShares = parseFloat(totalSharesStr);
+      if (!totalShares || !shareAmt) {
+        setClaimableFees({
+          feeA: "0.0000000",
+          feeB: "0.0000000",
+          codeA: codeOf(reserves[0].asset),
+          codeB: codeOf(reserves[1].asset),
+        });
+        return;
+      }
+      const [r0, r1] = reserves;
+      const a0 = parseFloat(r0.amount),
+        a1 = parseFloat(r1.amount);
+      const princ0 = (a0 * shareAmt) / totalShares;
+      const princ1 = (a1 * shareAmt) / totalShares;
+      const fee0 = (a0 - princ0).toFixed(7),
+        fee1 = (a1 - princ1).toFixed(7);
+      setClaimableFees({
+        feeA: fee0,
+        feeB: fee1,
+        codeA: codeOf(r0.asset),
+        codeB: codeOf(r1.asset),
+      });
+    },
+    [userShares]
+  );
+
   // Open deposit/withdraw modal
-  const openModal = (pool, mode) => {
+  const openActionModal = (pool, mode) => {
     setSelectedPool(pool);
     setActionMode(mode);
-    setModalOpen(true);
+    setActionModalOpen(true);
   };
 
   // Open claim-fees modal
-  const openClaim = (pool) => {
+  const openClaimModal = (pool) => {
     setSelectedPool(pool);
-    setClaimOpen(true);
+    computeFees(pool);
+    setClaimModalOpen(true);
   };
 
-  // Handle deposit or withdraw
-  const handleLiquidityAction = async (
-    poolId,
-    amtA,
-    amtB,
-    minPrice,
-    maxPrice
-  ) => {
+  // Handle deposit/withdraw
+  const handleLiquidityAction = async (poolId, amtA, amtB, minP, maxP) => {
     setTxModalOpen(true);
     setTxStatus("pending");
-    setTxMessage(`${actionMode.charAt(0).toUpperCase() + actionMode.slice(1)} in progress…`);
+    setTxMessage(
+      `${actionMode.charAt(0).toUpperCase() + actionMode.slice(1)} in progress…`
+    );
     setTxHash("");
 
     try {
-      // build buffer & tx builder
-      const poolIdBuf = new Uint8Array(Buffer.from(poolId, "hex"));
       const acct = await server.loadAccount(walletId);
       const txb = new TransactionBuilder(acct, {
         fee: BASE_FEE,
         networkPassphrase: NETWORK_PASSPHRASE,
       });
 
-      // build LP‐share asset for trustline
-      const [r0, r1] = selectedPool.reserves;
-      const assetA = r0.asset === "native"
-        ? Asset.native()
-        : new Asset(...r0.asset.split(":"));
-      const assetB = r1.asset === "native"
-        ? Asset.native()
-        : new Asset(...r1.asset.split(":"));
-      const feeBp = selectedPool.fee_bp ?? 30;
-      const lpAsset = new LiquidityPoolAsset(assetA, assetB, feeBp);
+      // Ensure trustline for LP shares
+      const lpPool = allPools.find((p) => p.id === poolId);
+      const [r0, r1] = lpPool.reserves;
+      const assetA =
+        r0.asset === "native"
+          ? Asset.native()
+          : new Asset(...r0.asset.split(":"));
+      const assetB =
+        r1.asset === "native"
+          ? Asset.native()
+          : new Asset(...r1.asset.split(":"));
+      const lpAsset = new LiquidityPoolAsset(assetA, assetB, lpPool.fee_bp);
 
-      // 1️⃣ ensure trustline
-      txb.addOperation(
-        Operation.changeTrust({ asset: lpAsset })
-      );
+      txb.addOperation(Operation.changeTrust({ asset: lpAsset }));
 
-      // 2️⃣ deposit or withdraw
+      const poolIdBuf = new Uint8Array(Buffer.from(poolId, "hex"));
       if (actionMode === "deposit") {
         txb.addOperation(
           Operation.liquidityPoolDeposit({
             liquidityPoolId: poolIdBuf,
             maxAmountA: amtA,
             maxAmountB: amtB,
-            minPrice,
-            maxPrice,
+            minPrice: minP,
+            maxPrice: maxP,
           })
         );
       } else {
@@ -189,24 +224,27 @@ export default function ViewPosition() {
       const code = e.extras?.result_codes?.operations?.[0];
       setTxMessage(code === "op_underfunded" ? "Insufficient balance" : e.message);
     } finally {
-      setModalOpen(false);
+      setActionModalOpen(false);
     }
   };
 
-  // Handle claim fees (withdraw+redeposit)
-  const handleConfirmClaim = async (poolIdStr) => {
+  // Handle claim fees (withdraw + redeposit principal)
+  const handleConfirmClaim = async (poolId) => {
     setTxModalOpen(true);
     setTxStatus("pending");
     setTxMessage("Claim in progress…");
     setTxHash("");
 
     try {
-      const poolRec = await server.liquidityPools().liquidityPoolId(poolIdStr).call();
+      const poolRec = await server
+        .liquidityPools()
+        .liquidityPoolId(poolId)
+        .call();
       const [ra, rb] = poolRec.reserves;
       const reserveA = parseFloat(ra.amount);
       const reserveB = parseFloat(rb.amount);
       const total = parseFloat(poolRec.total_shares);
-      const shareAmt = userShares[poolIdStr] || 0;
+      const shareAmt = userShares[poolId] || 0;
       const ratio = shareAmt / total;
       const pA = (reserveA * ratio).toFixed(7);
       const pB = (reserveB * ratio).toFixed(7);
@@ -216,9 +254,8 @@ export default function ViewPosition() {
         fee: BASE_FEE,
         networkPassphrase: NETWORK_PASSPHRASE,
       });
-      const poolIdBuf = new Uint8Array(Buffer.from(poolIdStr, "hex"));
+      const poolIdBuf = new Uint8Array(Buffer.from(poolId, "hex"));
 
-      // 1️⃣ withdraw all shares
       txb.addOperation(
         Operation.liquidityPoolWithdraw({
           liquidityPoolId: poolIdBuf,
@@ -227,7 +264,6 @@ export default function ViewPosition() {
           minAmountB: "0",
         })
       );
-      // 2️⃣ redeposit principal
       txb.addOperation(
         Operation.liquidityPoolDeposit({
           liquidityPoolId: poolIdBuf,
@@ -246,23 +282,29 @@ export default function ViewPosition() {
       setTxMessage("Fees claimed successfully!");
       setTxHash(resp.hash);
       fetchUserShares();
+      computeFees(selectedPool);
     } catch (e) {
       setTxStatus("error");
       setTxMessage(e.message);
     } finally {
-      setClaimOpen(false);
+      setClaimModalOpen(false);
     }
   };
 
   return (
     <Box sx={{ minHeight: "100vh", bgcolor: "#0A1B1F", color: "#fff", py: 4 }}>
       <Container maxWidth="lg">
-        <Box sx={{ display: "flex", justifyContent: "space-between", mb: 2 }}>
+        <Stack
+          direction="row"
+          justifyContent="space-between"
+          alignItems="center"
+          mb={3}
+        >
           <Typography variant="h4">All Liquidity Pools</Typography>
           <Button variant="outlined" onClick={fetchPools} disabled={loading}>
             {loading ? <CircularProgress size={20} /> : "Refresh"}
           </Button>
-        </Box>
+        </Stack>
 
         {error && <Typography color="error">{error}</Typography>}
 
@@ -271,97 +313,135 @@ export default function ViewPosition() {
             <CircularProgress size={48} />
           </Box>
         ) : (
-          <TableContainer component={Paper} sx={{ bgcolor: "#14232E", borderRadius: 2 }}>
-            <Table stickyHeader size="small">
-              <TableHead>
-                <TableRow sx={{ bgcolor: "#0E2429" }}>
-                  {[
-                    "#",
-                    "Pool ID",
-                    "Tokens",
-                    "Reserves",
-                    "Total LP",
-                    "Your Pool Shares",
-                    "%",
-                    "Actions",
-                  ].map((h, i) => (
-                    <TableCell
-                      key={h}
-                      align={i === 0 || i === 7 ? "center" : "left"}
-                      sx={{ color: "#fff", fontWeight: "bold", borderBottom: "none" }}
-                    >
-                      {h}
-                    </TableCell>
-                  ))}
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {allPools.map((p, idx) => {
-                  const [r0, r1] = p.reserves || [];
-                  const aA = codeOf(r0?.asset);
-                  const aB = codeOf(r1?.asset);
-                  const resA = parseFloat(r0?.amount || 0).toFixed(6);
-                  const resB = parseFloat(r1?.amount || 0).toFixed(6);
-                  const total = parseFloat(p.total_shares || 0).toFixed(6);
-                  const yours = (userShares[p.id] || 0).toFixed(6);
-                  const pct = total > 0 ? ((yours / total) * 100).toFixed(2) : "0.00";
+          <Fade in>
+            <TableContainer
+              component={Paper}
+              sx={{ bgcolor: "#14232E", borderRadius: 2 }}
+            >
+              <Table stickyHeader size="small">
+                <TableHead>
+                  <TableRow sx={{ bgcolor: "#0E2429" }}>
+                    {[
+                      "#",
+                      "Pool ID",
+                      "Tokens",
+                      "Reserves",
+                      "Total LP",
+                      "Your Shares",
+                      "%",
+                      "Actions",
+                    ].map((h, i) => (
+                      <TableCell
+                        key={h}
+                        align={i === 0 || i === 7 ? "center" : "left"}
+                        sx={{
+                          color: "#fff",
+                          fontWeight: "bold",
+                          borderBottom: "none",
+                        }}
+                      >
+                        {h}
+                      </TableCell>
+                    ))}
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {allPools.map((p, idx) => {
+                    const [r0, r1] = p.reserves || [];
+                    const aA = codeOf(r0?.asset);
+                    const aB = codeOf(r1?.asset);
+                    const resA = parseFloat(r0?.amount || 0).toFixed(6);
+                    const resB = parseFloat(r1?.amount || 0).toFixed(6);
+                    const total = parseFloat(p.total_shares || 0).toFixed(6);
+                    const yours = (userShares[p.id] || 0).toFixed(6);
+                    const pct =
+                      total > 0 ? ((yours / total) * 100).toFixed(2) : "0.00";
 
-                  return (
-                    <TableRow
-                      key={p.id}
-                      sx={{
-                        "&:nth-of-type(odd)": { bgcolor: "#0F1A20" },
-                        "&:hover": { bgcolor: "#1A2A34" },
-                      }}
-                    >
-                      <TableCell align="center" sx={{ color: "#ccc" }}>
-                        {idx + 1}
-                      </TableCell>
-                      <TableCell sx={{ wordBreak: "break-all", color: "#fff" }}>
-                        {p.id.slice(0, 6)}…{p.id.slice(-6)}
-                      </TableCell>
-                      <TableCell sx={{ color: "#fff" }}>{aA}/{aB}</TableCell>
-                      <TableCell sx={{ color: "#fff" }}>
-                        {resA} {aA} | {resB} {aB}
-                      </TableCell>
-                      <TableCell sx={{ color: "#fff" }}>{total}</TableCell>
-                      <TableCell sx={{ color: "#fff" }}>{yours}</TableCell>
-                      <TableCell align="center" sx={{ color: "#fff" }}>{pct}%</TableCell>
-                      <TableCell align="center">
-                        <IconButton size="small" sx={{ color: "#4caf50" }} onClick={() => openModal(p, "deposit")}>
-                          <IoAddCircleOutline />
-                        </IconButton>
-                        <IconButton size="small" sx={{ color: "#f44336" }} onClick={() => openModal(p, "withdraw")}>
-                          <IoRemoveCircleOutline />
-                        </IconButton>
-                        <IconButton size="small" sx={{ color: "#FFC107" }} onClick={() => openClaim(p)}>
-                          <IoCashOutline />
-                        </IconButton>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
-          </TableContainer>
+                    return (
+                      <TableRow
+                        key={p.id}
+                        sx={{
+                          "&:nth-of-type(odd)": { bgcolor: "#0F1A20" },
+                          "&:hover": { bgcolor: "#1A2A34" },
+                        }}
+                      >
+                        <TableCell align="center" sx={{ color: "#ccc" }}>
+                          {idx + 1}
+                        </TableCell>
+                        <TableCell
+                          sx={{ wordBreak: "break-all", color: "#fff" }}
+                        >
+                          {p.id.slice(0, 6)}…{p.id.slice(-6)}
+                        </TableCell>
+                        <TableCell sx={{ color: "#fff" }}>
+                          {aA}/{aB}
+                        </TableCell>
+                        <TableCell sx={{ color: "#fff" }}>
+                          {resA} {aA} | {resB} {aB}
+                        </TableCell>
+                        <TableCell sx={{ color: "#fff" }}>{total}</TableCell>
+                        <TableCell sx={{ color: "#fff" }}>{yours}</TableCell>
+                        <TableCell align="center" sx={{ color: "#fff" }}>
+                          {pct}%
+                        </TableCell>
+                        <TableCell align="center">
+                          <Tooltip title="Deposit">
+                            <IconButton
+                              size="small"
+                              sx={{ color: "#4caf50" }}
+                              onClick={() => openActionModal(p, "deposit")}
+                            >
+                              <IoAddCircleOutline />
+                            </IconButton>
+                          </Tooltip>
+                          <Tooltip title="Withdraw">
+                            <IconButton
+                              size="small"
+                              sx={{ color: "#f44336" }}
+                              onClick={() => openActionModal(p, "withdraw")}
+                            >
+                              <IoRemoveCircleOutline />
+                            </IconButton>
+                          </Tooltip>
+                          <Tooltip title="Claim Fees">
+                            <IconButton
+                              size="small"
+                              sx={{ color: "#FFC107" }}
+                              onClick={() => openClaimModal(p)}
+                            >
+                              <IoCashOutline />
+                            </IconButton>
+                          </Tooltip>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          </Fade>
         )}
 
+        {/* Deposit / Withdraw Modal */}
         <LiquidityActionModal
-          open={modalOpen}
+          open={actionModalOpen}
           mode={actionMode}
           poolId={selectedPool?.id}
           available={(userShares[selectedPool?.id] || 0).toString()}
-          onClose={() => setModalOpen(false)}
+          onClose={() => setActionModalOpen(false)}
           onAction={handleLiquidityAction}
         />
 
+        {/* Claim Fees Modal */}
         <ClaimFeesModal
-          open={claimOpen}
+          open={claimModalOpen}
           poolId={selectedPool?.id}
-          onClose={() => setClaimOpen(false)}
+          claimableFees={claimableFees}
           onConfirm={() => handleConfirmClaim(selectedPool?.id)}
+          onClose={() => setClaimModalOpen(false)}
         />
 
+        {/* Transaction Status Modal */}
         <TransactionModal
           open={txModalOpen}
           onClose={() => setTxModalOpen(false)}

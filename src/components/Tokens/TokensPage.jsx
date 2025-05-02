@@ -1,3 +1,4 @@
+// src/components/TokensPage.jsx
 import React, { useState, useEffect } from "react";
 import {
   Container,
@@ -14,6 +15,12 @@ import {
   TableBody,
   TablePagination,
   Tooltip,
+  Button,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Stack,
 } from "@mui/material";
 import { Aurora } from "diamnet-sdk";
 
@@ -30,9 +37,8 @@ function truncate(str, start = 6, end = 6) {
 export default function TokensPage() {
   const walletId = localStorage.getItem("diamPublicKey") || "";
 
-  // all on‐chain assets
+  // all on‑chain assets
   const [allAssets, setAllAssets] = useState([]);
-  // user trustlines: { "CODE:ISSUER": { balance, buying, selling } }
   const [trustlines, setTrustlines] = useState({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -42,19 +48,23 @@ export default function TokensPage() {
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(10);
 
-  // 1) Fetch up to 200 assets from Horizon
+  // trade modal state
+  const [tradeModalOpen, setTradeModalOpen] = useState(false);
+  const [tradeMode, setTradeMode] = useState(""); // "buy" | "sell"
+  const [tradeAsset, setTradeAsset] = useState({ code: "", issuer: "" });
+  const [tradeAmount, setTradeAmount] = useState("");
+
+  // fetch assets
   useEffect(() => {
     setLoading(true);
     fetch(`${HORIZON_URL}/assets?limit=200`)
       .then((r) => r.json())
-      .then((json) => {
-        setAllAssets(json._embedded?.records || []);
-      })
+      .then((json) => setAllAssets(json._embedded?.records || []))
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
   }, []);
 
-  // 2) Fetch user's trustlines (balances & liabilities)
+  // fetch trustlines
   useEffect(() => {
     if (!walletId) return;
     server
@@ -70,7 +80,6 @@ export default function TokensPage() {
             selling: parseFloat(b.selling_liabilities || 0),
           };
         });
-        // also include native DIAM
         map["DIAM:"] = {
           balance: parseFloat(
             acct.balances.find((b) => b.asset_type === "native")?.balance || 0
@@ -83,9 +92,8 @@ export default function TokensPage() {
       .catch((e) => console.error(e));
   }, [walletId]);
 
-  // Filter & paginate
+  // filter + paginate
   const filtered = allAssets.filter((asset) => {
-    // for native assets endpoint won't include native, so we insert DIAM separately
     const code = asset.asset_code || "DIAM";
     const issuer = asset.asset_issuer || "";
     return (
@@ -98,23 +106,29 @@ export default function TokensPage() {
     page * rowsPerPage + rowsPerPage
   );
 
-  if (loading) {
-    return (
-      <Box textAlign="center" mt={8}>
-        <CircularProgress size={48} />
-      </Box>
-    );
-  }
-  if (error) {
-    return <Typography color="error">{error}</Typography>;
-  }
+  if (loading) return <Box textAlign="center" mt={8}><CircularProgress size={48} /></Box>;
+  if (error) return <Typography color="error">{error}</Typography>;
+
+  // open trade modal
+  const openTradeModal = (mode, code, issuer) => {
+    setTradeMode(mode);
+    setTradeAsset({ code, issuer });
+    setTradeAmount("");
+    setTradeModalOpen(true);
+  };
+
+  // handle trade submit (stub - integrate your logic)
+  const handleTrade = () => {
+    // e.g. navigate or call trade function
+    console.log(`${tradeMode} ${tradeAmount} ${tradeAsset.code}:${tradeAsset.issuer}`);
+    setTradeModalOpen(false);
+  };
 
   return (
     <Container maxWidth="lg" sx={{ py: 4 }}>
       <Typography variant="h4" gutterBottom>
         ALL Tokens
       </Typography>
-    
 
       <Box sx={{ mb: 2 }}>
         <TextField
@@ -126,10 +140,7 @@ export default function TokensPage() {
             setFilterText(e.target.value);
             setPage(0);
           }}
-          sx={{
-            backgroundColor: "#14232E",
-            input: { color: "#FFF" },
-          }}
+          sx={{ backgroundColor: "#14232E", input: { color: "#FFF" } }}
         />
       </Box>
 
@@ -145,16 +156,12 @@ export default function TokensPage() {
                   "Balance",
                   "Buying Liab.",
                   "Selling Liab.",
+                  "Actions",
                 ].map((h, i) => (
                   <TableCell
                     key={i}
                     align={i === 0 ? "center" : "left"}
-                    sx={{
-                      color: "#FFF",
-                      fontWeight: "bold",
-                      py: 1.5,
-                      borderBottom: "none",
-                    }}
+                    sx={{ color: "#FFF", fontWeight: "bold", py: 1.5, borderBottom: "none" }}
                   >
                     {h}
                   </TableCell>
@@ -166,12 +173,7 @@ export default function TokensPage() {
                 const code = asset.asset_code || "DIAM";
                 const issuer = asset.asset_issuer || "";
                 const key = issuer ? `${code}:${issuer}` : "DIAM:";
-                const tl = trustlines[key] || {
-                  balance: 0,
-                  buying: 0,
-                  selling: 0,
-                };
-
+                const tl = trustlines[key] || { balance:0, buying:0, selling:0 };
                 return (
                   <TableRow
                     key={key}
@@ -193,14 +195,26 @@ export default function TokensPage() {
                         "—"
                       )}
                     </TableCell>
-                    <TableCell sx={{ color: "#FFF" }}>
-                      {tl.balance.toFixed(7)}
-                    </TableCell>
-                    <TableCell sx={{ color: "#FFF" }}>
-                      {tl.buying.toFixed(7)}
-                    </TableCell>
-                    <TableCell sx={{ color: "#FFF" }}>
-                      {tl.selling.toFixed(7)}
+                    <TableCell sx={{ color: "#FFF" }}>{tl.balance.toFixed(7)}</TableCell>
+                    <TableCell sx={{ color: "#FFF" }}>{tl.buying.toFixed(7)}</TableCell>
+                    <TableCell sx={{ color: "#FFF" }}>{tl.selling.toFixed(7)}</TableCell>
+                    <TableCell>
+                      <Stack direction="row" spacing={1}>
+                        <Button
+                          size="small"
+                          variant="contained"
+                          onClick={() => openTradeModal("buy", code, issuer)}
+                        >
+                          Buy
+                        </Button>
+                        <Button
+                          size="small"
+                          variant="outlined"
+                          onClick={() => openTradeModal("sell", code, issuer)}
+                        >
+                          Sell
+                        </Button>
+                      </Stack>
                     </TableCell>
                   </TableRow>
                 );
@@ -208,26 +222,42 @@ export default function TokensPage() {
             </TableBody>
           </Table>
         </TableContainer>
-
         <TablePagination
           component="div"
           count={filtered.length}
           page={page}
           onPageChange={(_, newPage) => setPage(newPage)}
           rowsPerPage={rowsPerPage}
-          onRowsPerPageChange={(e) => {
-            setRowsPerPage(parseInt(e.target.value, 10));
-            setPage(0);
-          }}
-          rowsPerPageOptions={[5, 10, 25, 50]}
+          onRowsPerPageChange={(e) => { setRowsPerPage(+e.target.value); setPage(0); }}
+          rowsPerPageOptions={[5,10,25,50]}
           sx={{
             bgcolor: "#0E2429",
-            ".MuiTablePagination-selectLabel, .MuiTablePagination-displayedRows": {
-              color: "#FFF",
-            },
+            ".MuiTablePagination-selectLabel, .MuiTablePagination-displayedRows": { color: "#FFF" }
           }}
         />
       </Paper>
+
+      <Dialog open={tradeModalOpen} onClose={() => setTradeModalOpen(false)}>
+        <DialogTitle>{tradeMode === "buy" ? "Buy Asset" : "Sell Asset"}</DialogTitle>
+        <DialogContent>
+          <Typography variant="subtitle2" gutterBottom>
+            {tradeAsset.code}{tradeAsset.issuer ? `:${tradeAsset.issuer}` : " (DIAM)"}
+          </Typography>
+          <TextField
+            label="Amount"
+            fullWidth
+            variant="outlined"
+            value={tradeAmount}
+            onChange={(e) => setTradeAmount(e.target.value.replace(/[^0-9.]/g, ""))}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setTradeModalOpen(false)}>Cancel</Button>
+          <Button variant="contained" onClick={handleTrade} disabled={!tradeAmount}>
+            {tradeMode === "buy" ? "Buy" : "Sell"}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Container>
   );
 }

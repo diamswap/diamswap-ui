@@ -119,57 +119,57 @@ export default function CreatePoolPage() {
   }, [assetCode, tokenBalances]);
 
   // ─── 5️⃣ Compute livePrice + auto-fill ──────────────
-  useEffect(() => {
-    if (!pools.length || !tokenA || !tokenB) return;
+  // useEffect(() => {
+  //   if (!pools.length || !tokenA || !tokenB) return;
 
-    // parse asset
-    const parse = (t) =>
-      t === "native"
-        ? { code: "native", issuer: null }
-        : { code: t.split(":")[0], issuer: t.split(":")[1] };
-    const { code: A, issuer: iA } = parse(tokenA);
-    const { code: B, issuer: iB } = parse(tokenB);
+  //   // parse asset
+  //   const parse = (t) =>
+  //     t === "native"
+  //       ? { code: "native", issuer: null }
+  //       : { code: t.split(":")[0], issuer: t.split(":")[1] };
+  //   const { code: A, issuer: iA } = parse(tokenA);
+  //   const { code: B, issuer: iB } = parse(tokenB);
 
-    // find that pool
-    const pool = pools.find((p) => {
-      const has = (c, i) =>
-        c === "native"
-          ? p.reserves.some((r) => r.asset === "native")
-          : p.reserves.some((r) => r.asset === `${c}:${i}`);
-      return has(A, iA) && has(B, iB);
-    });
-    if (!pool) {
-      setLivePrice("0.000000");
-      return;
-    }
+  //   // find that pool
+  //   const pool = pools.find((p) => {
+  //     const has = (c, i) =>
+  //       c === "native"
+  //         ? p.reserves.some((r) => r.asset === "native")
+  //         : p.reserves.some((r) => r.asset === `${c}:${i}`);
+  //     return has(A, iA) && has(B, iB);
+  //   });
+  //   if (!pool) {
+  //     setLivePrice("0.000000");
+  //     return;
+  //   }
 
-    // read reserves
-    const amtA = parseFloat(
-      A === "native"
-        ? pool.reserves.find((r) => r.asset === "native").amount
-        : pool.reserves.find((r) => r.asset === `${A}:${iA}`).amount
-    );
-    const amtB = parseFloat(
-      B === "native"
-        ? pool.reserves.find((r) => r.asset === "native").amount
-        : pool.reserves.find((r) => r.asset === `${B}:${iB}`).amount
-    );
-    if (!amtA) {
-      setLivePrice("0.000000");
-      return;
-    }
+  //   // read reserves
+  //   const amtA = parseFloat(
+  //     A === "native"
+  //       ? pool.reserves.find((r) => r.asset === "native").amount
+  //       : pool.reserves.find((r) => r.asset === `${A}:${iA}`).amount
+  //   );
+  //   const amtB = parseFloat(
+  //     B === "native"
+  //       ? pool.reserves.find((r) => r.asset === "native").amount
+  //       : pool.reserves.find((r) => r.asset === `${B}:${iB}`).amount
+  //   );
+  //   if (!amtA) {
+  //     setLivePrice("0.000000");
+  //     return;
+  //   }
 
-    const price = amtB / amtA;
-    setLivePrice(price.toFixed(6));
+  //   const price = amtB / amtA;
+  //   setLivePrice(price.toFixed(6));
 
-    // auto-fill the opposite field
-    if (lastEdited.current === "A" && ethAmount) {
-      setUsdtAmount((parseFloat(ethAmount) * price).toFixed(6));
-    }
-    if (lastEdited.current === "B" && usdtAmount) {
-      setEthAmount((parseFloat(usdtAmount) / price).toFixed(6));
-    }
-  }, [ethAmount, usdtAmount, tokenA, tokenB, pools]);
+  //   // auto-fill the opposite field
+  //   if (lastEdited.current === "A" && ethAmount) {
+  //     setUsdtAmount((parseFloat(ethAmount) * price).toFixed(6));
+  //   }
+  //   if (lastEdited.current === "B" && usdtAmount) {
+  //     setEthAmount((parseFloat(usdtAmount) / price).toFixed(6));
+  //   }
+  // }, [ethAmount, usdtAmount, tokenA, tokenB, pools]);
 
   // ─── Helpers ───────────────────────────────────────
   const parseTokenInput = (input) => {
@@ -415,50 +415,80 @@ export default function CreatePoolPage() {
           </>
         ) : (
           <>
-            {/* DEPOSIT */}
-            <IconButton onClick={() => setStep(0)} sx={{ mb: 2 }}>
-              <FiArrowLeft color="#fff" />
+          {/* DEPOSIT */}
+          <Box sx={{ display: "flex", alignItems: "center", mb: 2 }}>
+            <IconButton onClick={() => setStep(0)} sx={{ color: "#fff" }}>
+              <FiArrowLeft />
             </IconButton>
-            <Typography variant="h6" sx={{ mb: 1, color: "#fff" }}>
+            <Typography variant="h6" sx={{ ml: 1, color: "#fff" }}>
               Deposit tokens
             </Typography>
-            <Typography sx={{ mb: 2, fontSize: 14, color: "gray" }}>
-              Specify the token amounts for your liquidity contribution.
-            </Typography>
-            <Typography variant="body2" color="#ccc" sx={{ mb: 2 }}>
-              1 {tokenA === "native" ? "DIAM" : tokenA.split(":")[0]} = {livePrice}{" "}
-              {assetCode}
-            </Typography>
-
+          </Box>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+            Specify the amounts of each token you’d like to deposit into the pool.
+          </Typography>
+        
+          <Stack spacing={3}>
+            {/* DIAM amount field */}
             <TextField
-              fullWidth
-              label="Token A amount"
+              variant="filled"
+              label="DIAM Amount"
+              placeholder="0.0"
               value={ethAmount}
-              onChange={(e) => {
+              onChange={e => {
                 lastEdited.current = "A";
                 setEthAmount(e.target.value.replace(/[^0-9.]/g, ""));
               }}
-              sx={{ mb: 2 }}
-            />
-            <TextField
-              fullWidth
-              label="Token B amount"
-              value={usdtAmount}
-              onChange={(e) => {
-                lastEdited.current = "B";
-                setUsdtAmount(e.target.value.replace(/[^0-9.]/g, ""));
+              InputProps={{
+                endAdornment: <InputAdornment position="end">DIAM</InputAdornment>,
               }}
-              sx={{ mb: 3 }}
+              sx={{
+                bgcolor: "#1a1a1a",
+                borderRadius: 1,
+                "& .MuiFilledInput-root": { borderRadius: 4 },
+              }}
             />
-            <CustomButton
-              fullWidth
-              variant="contained"
-              disabled={!ethAmount || !usdtAmount}
-              onClick={handleCreatePool}
-            >
-              {loading ? <CircularProgress size={24} /> : "Create Pool"}
-            </CustomButton>
-          </>
+        
+            {/* Token B amount field (code only, not full issuer) */}
+            {tokenB && (
+              <TextField
+                variant="filled"
+                label={`${tokenB.split(":")[0]} Amount`}
+                placeholder="0.0"
+                value={usdtAmount}
+                onChange={e => {
+                  lastEdited.current = "B";
+                  setUsdtAmount(e.target.value.replace(/[^0-9.]/g, ""));
+                }}
+                InputProps={{
+                  endAdornment: (
+                    <InputAdornment position="end">
+                      {tokenB.split(":")[0]}
+                    </InputAdornment>
+                  ),
+                }}
+                sx={{
+                  bgcolor: "#1a1a1a",
+                  borderRadius: 1,
+                  "& .MuiFilledInput-root": { borderRadius: 4 },
+                }}
+              />
+            )}
+        
+            {/* Create Pool button */}
+            <Box textAlign="center" mt={2}>
+              <CustomButton
+                fullWidth
+                variant="contained"
+                disabled={!ethAmount || !usdtAmount}
+                onClick={handleCreatePool}
+              >
+                {loading ? <CircularProgress size={24} /> : "Create Pool"}
+              </CustomButton>
+            </Box>
+          </Stack>
+        </>
+        
         )}
       </Box>
 
